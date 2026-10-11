@@ -80,7 +80,10 @@ export function keyText(key) {
 // the answer shown to the student after checking: the first accepted variant
 export const firstKey = (key) => expandKey(Array.isArray(key) ? key[0] ?? "" : key ?? "")[0].replace(/\s+/g, " ").trim();
 
-export function isCorrect(given, key) {
+// "lenient": articles (a, an, the) and a leading "to" / "be" / "to be" do not matter
+// (used where students write out phrases found in a text)
+const loosen = (t) => t.replace(/\b(a|an|the)\b/g, " ").replace(/^\s*(to\s+)?(be\s+)?/, "").replace(/\s+/g, " ").trim();
+export function isCorrect(given, key, opts = {}) {
   if (given == null || norm(given) === "") return false;
   const variants = (Array.isArray(key) ? key : [key]).flatMap(expandKey);
   // "'d" can mean "had" or "would": try both
@@ -88,6 +91,10 @@ export function isCorrect(given, key) {
   for (let i = 0; i < 3 && gs.some((x) => /'d\b/.test(x)); i++)
     gs = gs.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
   const keysN = new Set(variants.map(norm));
+  if (opts.lenient) {
+    const keysL = new Set([...keysN].map(loosen));
+    return gs.some((x) => keysN.has(x) || keysL.has(loosen(x)));
+  }
   return gs.some((x) => keysN.has(x));
 }
 
@@ -101,7 +108,7 @@ export function gradeAuto(content, answers, keys) {
     for (const it of scoredItems(ex)) {
       const given = answers?.[ex.id]?.[it.id] ?? "";
       const key = keys?.[ex.id]?.[it.id];
-      const ok = isCorrect(given, key);
+      const ok = isCorrect(given, key, { lenient: ex.lenient });
       items[ex.id][it.id] = { given, ok, correct: firstKey(key) };
       max += 1;
       if (ok) score += 1;
@@ -118,7 +125,7 @@ export function gradeExercise(ex, answers, keys) {
   for (const it of list) {
     const given = answers?.[it.id] ?? "";
     const key = keys?.[it.id];
-    const ok = isCorrect(given, key);
+    const ok = isCorrect(given, key, { lenient: ex.lenient });
     items[it.id] = { given, ok, correct: firstKey(key) };
     if (ok) score += 1;
   }
