@@ -601,3 +601,4 @@ ol.items.labelled .lab{display:inline-grid;place-items:center;width:24px;height:
 .fc-back .eg{font-size:15.5px;border-top:1px dashed var(--ochre2);padding-top:8px;max-width:48ch}
 .fc-front .pos{font-size:13px;font-style:italic;opacity:.8}
 @media(max-width:600px){.fc-card{height:340px}.fc-face{padding:18px}}
+.au-done{font-size:14px;color:var(--mut);font-style:italic;margin:4px 0}

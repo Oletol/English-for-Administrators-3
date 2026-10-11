@@ -9,6 +9,7 @@ import { COURSE_TITLE } from "./firebase-config.js";
 import {
   esc, renderBlocks, readInput, fmtTime, friendlyError, authFormHTML, wireAuthForm, subId, exercisesOf, isAuto,
   isTeacherChecked, wireFlashcards, countWords,
+  setPlayScope,
 } from "./common.js";
 import { initShell, renderUnitNav, wireUnitNav } from "./shell.js";
 import { feedbackHTML } from "./writing.js";
@@ -476,14 +477,14 @@ function renderTest(key) {
   const t = S.group?.tests?.[key];
   content.dataset.unit = "";
   setCrumb(`<b>Test</b> &middot; ${esc(t?.title || "")}`);
-  $("#unit-bar").innerHTML = "";
+  if (content.dataset.test !== key) $("#unit-bar").innerHTML = "";
   if (!t) { content.dataset.view = ""; content.dataset.test = ""; content.innerHTML = `<div class="locked-msg">This test is not available.</div>`; return; }
   ensureAttempt(key);
   if (t.released) ensureTestResult(key);
   const a = S.att[key];
   const head = `<header class="page-h"><div class="pe">Test</div><h2>${esc(t.title)}</h2><p class="pl">Time limit: ${t.minutes} minutes</p></header>`;
   document.title = `Test · ${t.title}`;
-  if (a === undefined) { content.innerHTML = head + `<p class="muted">Loading…</p>`; return; }
+  if (a === undefined) { content.dataset.view = ""; content.innerHTML = head + `<p class="muted">Loading…</p>`; return; }
   if (a === null) {
     content.dataset.view = ""; content.dataset.test = "";
     content.innerHTML = head + (t.open
@@ -495,17 +496,19 @@ function renderTest(key) {
     return;
   }
   const c = S.tcontent[key];
-  if (c === undefined || c === "loading") { content.innerHTML = head + `<p class="muted">Loading the test…</p>`; return; }
-  if (c === null) { content.innerHTML = head + `<div class="locked-msg">The test cannot be shown. It may have been closed by your teacher.</div>`; return; }
+  if (c === undefined || c === "loading") { content.dataset.view = ""; content.innerHTML = head + `<p class="muted">Loading the test…</p>`; return; }
+  if (c === null) { content.dataset.view = ""; content.innerHTML = head + `<div class="locked-msg">The test cannot be shown. It may have been closed by your teacher.</div>`; return; }
   const deadline = deadlineOf(key);
   const timeUp = deadline && Date.now() >= deadline;
   const readOnly = a.status === "submitted" || timeUp || !t.open;
   const res = t.released ? S.tres[key] : undefined;
   const viewKey = `test/${key}/${readOnly}/${!!res}`;
-  const active = document.activeElement;
-  if (content.dataset.view === viewKey && active?.dataset?.item && content.contains(active)) { renderTestBar(key, readOnly, res); return; }
+  // the questions do not change while the test is open: re-drawing them would only stop the recording
+  // and move the cursor, so an autosave (or any other update) redraws the bar only
+  if (content.dataset.view === viewKey && content.dataset.test === key) { renderTestBar(key, readOnly, res); return; }
   content.dataset.view = viewKey;
   content.dataset.test = key;
+  setPlayScope(`${S.user.uid}/${key}`);
   if (readOnly && a.status !== "submitted" && !timeUp) {}  // closed by the teacher
   content.innerHTML = head + (c.rubric ? `<div class="rubric">${c.rubric}</div>` : "")
     + renderBlocks(c.exercises || [], (ex) => ({
@@ -526,6 +529,7 @@ function renderTestBar(key, readOnly, res) {
   if (t.released) html = res ? `<div class="ub ub-res"><b>Your result: ${res.score} / ${res.max}</b><span>${esc(t.title)}</span></div>`
                              : `<div class="ub">Results are available, but you did not answer this test.</div>`;
   else if (readOnly) html = `<div class="ub ub-sub">✓ Your answers have been submitted. Your teacher will show the results.</div>`;
+  else if ($("#test-timer") && $("#save-state")) return;   // the bar is already there: keep the "Saved" state
   else html = `<div class="ub" style="position:sticky;top:64px;z-index:5"><span id="save-state" class="muted">Your answers are saved automatically</span>
       <b id="test-timer" style="font-family:var(--mono);font-size:18px">${fmtLeft(deadlineOf(key) - Date.now())}</b></div>`;
   $("#unit-bar").innerHTML = html;

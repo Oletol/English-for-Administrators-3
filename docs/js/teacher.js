@@ -672,7 +672,11 @@ function splitUnit(u) {
     if (!t.id || !/^[A-Za-z0-9_-]+$/.test(t.id) || tests[t.id]) throw new Error(`Unit ${u.id}: test with a missing or repeated id “${t.id}”`);
     if (!(Number(t.minutes) > 0)) throw new Error(`Test ${t.id}: set "minutes" (the time limit)`);
     const seenT = new Set(), keysT = {};
-    const exercises = (t.exercises || []).map((b) => { const r = stripExercise(b, seenT, `${u.id}, test ${t.id}`); keysT[b.id] = r.keys; return r.ex; });
+    // a test may also contain headings (html) and a recording (audio) between its exercises
+    const exercises = (t.exercises || []).map((b) => {
+      if (b.type && b.type !== "exercise") return b;
+      const r = stripExercise(b, seenT, `${u.id}, test ${t.id}`); keysT[b.id] = r.keys; return r.ex;
+    });
     tests[t.id] = { unitId: u.id, testId: t.id, title: t.title || "Test", minutes: Number(t.minutes), rubric: t.rubric || "", exercises };
     testKeys[t.id] = { title: t.title || "Test", minutes: Number(t.minutes), keys: keysT };
   }

@@ -52,7 +52,7 @@ export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple c
 // an item is scored only if it has the exercise's own kind and is not marked "graded": false
 export const scoredItems = (ex) => (ex.items || []).filter((it) => (!it.kind || it.kind === ex.kind) && it.graded !== false);
 // auto-checked: has keys (not "open", not marked "graded": false)
-export const isAuto = (ex) => !["open", "estimate", "rate"].includes(ex.kind) && ex.graded !== false;
+export const isAuto = (ex) => !!ex.kind && !["open", "estimate", "rate"].includes(ex.kind) && ex.graded !== false;
 // marked by the teacher by hand
 export const isManual = (ex) => ex.kind === "open" && ex.graded !== false;
 // checked by the teacher separately, exercise by exercise ("check": "teacher")
@@ -506,10 +506,23 @@ function renderVideo(b) {
     <div class="vid-cap"><div class="vid-t">${esc(b.title || "Video")}</div>${b.note ? `<div class="vid-m">${esc(b.note)}</div>` : ""}
     <a class="vid-l" href="${esc(b.url || "")}" target="_blank" rel="noopener">Open the film in a new tab</a></div></div>`;
 }
+// "maxPlays": the student may play the recording this many times (tests); the teacher has no limit
+// plays are counted per student and per test (student.js sets the scope), so on a shared classroom computer
+// each student starts from zero
+let playScope = "";
+export const setPlayScope = (s) => { playScope = s || ""; };
+const playsKey = (src) => "plays:" + playScope + ":" + src;
+const playsOf = (src) => { try { return Number(localStorage.getItem(playsKey(src)) || 0); } catch { return 0; } };
 function renderAudio(b) {
+  const limit = b.maxPlays && !isTeacherPage() ? Number(b.maxPlays) : 0;
+  const used = limit ? playsOf(mediaSrc(b.src)) : 0;
+  const player = limit && used >= limit
+    ? `<p class="au-done">You have listened to the recording ${limit === 2 ? "twice" : limit + " times"}.</p>`
+    : `<audio controls preload="none" controlslist="nodownload noplaybackrate" src="${mediaSrc(b.src)}" ${limit ? `data-maxplays="${limit}"` : ""}></audio>
+       ${limit ? `<div class="au-n">You can play the recording ${limit === 2 ? "twice" : limit + " times"}. Plays used: <b class="au-used">${used}</b> of ${limit}. Do not pause or rewind: each start counts.</div>` : ""}`;
   return `<div class="audio"><div class="au-ic">🎧</div><div class="au-b">
       <div class="au-t">${esc(b.title || "Listen")}</div>
-      <audio controls preload="none" controlslist="nodownload noplaybackrate" src="${mediaSrc(b.src)}"></audio>
+      ${player}
       ${b.note ? `<div class="au-n">${esc(b.note)}</div>` : ""}
     </div></div>`;
 }
@@ -526,6 +539,26 @@ function itemPlayButton(src, once) {
   const used = once && !isTeacherPage() && playedBefore(s);
   return `<button type="button" class="iplay ${used ? "used" : ""}" data-src="${s}" ${once ? 'data-once="1"' : ""} ${used ? "disabled" : ""}
     aria-label="Play the recording" title="${used ? "You have already listened to this recording" : "Play"}"><span class="tri"></span></button>`;
+}
+if (typeof document !== "undefined") {
+  // each time a limited recording starts from the beginning it uses one play
+  document.addEventListener("play", (e) => {
+    const a = e.target;
+    if (!a.dataset?.maxplays) return;
+    const src = a.getAttribute("src"), limit = Number(a.dataset.maxplays);
+    if (a.currentTime > 1) return;            // resumed after a pause
+    const n = playsOf(src);
+    if (n >= limit) { a.pause(); return; }
+    try { localStorage.setItem(playsKey(src), String(n + 1)); } catch {}
+    const box = a.closest(".au-b")?.querySelector(".au-used");
+    if (box) box.textContent = n + 1;
+  }, true);
+  document.addEventListener("ended", (e) => {
+    const a = e.target;
+    if (!a.dataset?.maxplays) return;
+    if (playsOf(a.getAttribute("src")) >= Number(a.dataset.maxplays))
+      a.outerHTML = `<p class="au-done">You have listened to the recording ${a.dataset.maxplays === "2" ? "twice" : a.dataset.maxplays + " times"}.</p>`;
+  }, true);
 }
 let curAudio = null, curBtn = null;
 if (typeof document !== "undefined") document.addEventListener("click", (e) => {
