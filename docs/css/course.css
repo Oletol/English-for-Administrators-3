@@ -602,3 +602,8 @@ ol.items.labelled .lab{display:inline-grid;place-items:center;width:24px;height:
 .fc-front .pos{font-size:13px;font-style:italic;opacity:.8}
 @media(max-width:600px){.fc-card{height:340px}.fc-face{padding:18px}}
 .au-done{font-size:14px;color:var(--mut);font-style:italic;margin:4px 0}
+/* current group: shown on every page that acts on a group */
+.gbar{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 0 18px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--plum,#6d3b5e) 30%,transparent);border-left:4px solid var(--plum,#6d3b5e);border-radius:10px;background:var(--card);font-size:14px}
+.gbar-l{font-weight:700;color:var(--ink)}
+.gbar select{font:inherit;font-weight:700;font-size:15px;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:5px 10px;background:var(--card)}
+.gbar .muted{font-size:12.5px}

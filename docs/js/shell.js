@@ -20,10 +20,11 @@ export function initShell() {
   });
 }
 
-// Units whose sections are expanded in the sidebar. The unit being studied is always open;
+// Units whose sections are expanded in the sidebar. The unit being studied opens by itself and can be folded;
 // others open only when the user clicks their header, and close again on navigation.
 const manual = new Set();
 let lastUnit = null;
+let currentClosed = false;     // the current unit can be folded too, by clicking its header
 
 /**
  * units:  [{id, title, order, status, sections:[{id,title,subtitle}]}]
@@ -31,14 +32,14 @@ let lastUnit = null;
  * route:  { unit, section }
  */
 export function renderUnitNav(el, { units, state, route, hrefPrefix = "", empty = "" }) {
-  if (route.unit !== lastUnit) { manual.clear(); lastUnit = route.unit; }
+  if (route.unit !== lastUnit) { manual.clear(); lastUnit = route.unit; currentClosed = false; }
   if (!units.length) { el.innerHTML = `<div class="sb-empty">${empty}</div>`; return; }
   el.innerHTML = units.map((u, i) => {
     const st = state(u);
     const num = u.order || i + 1;
     const current = route.unit === u.id;
     const canOpen = !st.locked && (u.sections || []).length && u.status !== "soon";
-    const open = canOpen && (current || manual.has(u.id));
+    const open = canOpen && (current ? !currentClosed : manual.has(u.id));
     const secs = canOpen ? (u.sections || []).map((s, j) => {
       const on = current && (route.section || u.sections[0]?.id) === s.id;
       return `<a class="sb-item ${on ? "on" : ""}" href="#${hrefPrefix}${esc(u.id)}/${esc(s.id)}">
@@ -55,15 +56,15 @@ export function renderUnitNav(el, { units, state, route, hrefPrefix = "", empty 
   }).join("");
 }
 
-// Click on a unit header: expand/collapse it; locked or empty units open their info page.
+// Click on a unit header: expand or fold it (the + / – sign); locked or empty units open their info page.
 export function wireUnitNav(el, rerender, hrefPrefix = "") {
   el.addEventListener("click", (e) => {
     const h = e.target.closest(".sb-uh");
     if (!h) return;
     const id = h.dataset.unit;
     if (h.dataset.canOpen !== "1") { location.hash = `#${hrefPrefix}${id}`; return; }
-    if (id === lastUnit) { location.hash = `#${hrefPrefix}${id}`; return; }   // current unit stays open
-    manual.has(id) ? manual.delete(id) : manual.add(id);
+    if (id === lastUnit) currentClosed = !currentClosed;
+    else manual.has(id) ? manual.delete(id) : manual.add(id);
     rerender();
   });
 }

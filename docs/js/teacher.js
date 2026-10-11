@@ -99,7 +99,24 @@ function fillCtx() {
   $("#ctx-group").innerHTML = T.groups.map((g) => `<option value="${esc(g.id)}" ${g.id === T.gid ? "selected" : ""}>${esc(g.name || g.id)}</option>`).join("") || `<option value="">no groups yet</option>`;
   $("#ctx-unit").innerHTML = T.units.map((u, i) => `<option value="${esc(u.id)}" ${u.id === T.unitId ? "selected" : ""}>Unit ${u.order || i + 1}</option>`).join("") || `<option value="">no units yet</option>`;
 }
-$("#ctx-group").addEventListener("change", (e) => { T.gid = e.target.value; ls.set("gid", T.gid); T.selected = null; subscribeCtx(); render(); });
+$("#ctx-group").addEventListener("change", (e) => setGroup(e.target.value));
+// one group is "current" for every page (access, student work, tests, analytics); it is remembered in this browser
+function setGroup(id) {
+  if (!id || !T.groups.some((g) => g.id === id)) return;
+  T.gid = id; ls.set("gid", id); T.selected = null; T.groupFilter = null;
+  $("#ctx-group").value = id;
+  subscribeCtx();
+  if (T.testSel) subscribeAttempts();
+  render(true);
+  toast(`Current group: ${group().name || id}`);
+}
+const groupBar = () => {
+  const g = group();
+  if (!g) return "";
+  return `<div class="gbar"><span class="gbar-l">You are working with group</span>
+    <select data-gpick aria-label="Current group">${T.groups.map((x) => `<option value="${esc(x.id)}" ${x.id === T.gid ? "selected" : ""}>${esc(x.name || x.id)}</option>`).join("")}</select>
+    <span class="muted">Everything on this page, including tests, applies to this group only.</span></div>`;
+};
 $("#ctx-unit").addEventListener("change", (e) => setUnit(e.target.value));
 function setUnit(id) {
   if (!id || id === T.unitId) return;
@@ -191,16 +208,25 @@ function render(force = false) {
   renderNav();
   // do not re-render while the teacher is typing a mark, comment or JSON
   const a = document.activeElement;
-  if (!force && a && $("#view").contains(a) && a.matches(".g-score,.g-comment,textarea.json,input[type=text],input:not([type])")) return;
+  if (!force && a && $("#view").contains(a) && a.matches(".g-score,.g-comment,textarea.json,input[type=text],input:not([type]),select")) return;
+  // panels the teacher has opened (e.g. "Questions with keys") stay open when the page is refreshed
+  const keepOpen = new Set([...document.querySelectorAll("#view details[data-keep][open]")].map((d) => d.dataset.keep));
+  const y = window.scrollY;
   const r = route();
   if (r.unit && r.unit !== T.unitId && T.units.some((u) => u.id === r.unit)) { setUnit(r.unit); return; }
   $("#wrap").classList.toggle("wide", !!r.tool && r.tool !== "content");
-  if (r.unit) { $("#view").innerHTML = viewUnit(r); return; }
+  if (r.unit) { lastHash = location.hash; $("#view").innerHTML = viewUnit(r); return; }
   const tool = TOOLS.find((t) => t.id === r.tool);
   $("#crumb").innerHTML = `<b>Teaching tools</b> &middot; ${tool.title}`;
   const views = { access: viewAccess, works: viewWorks, tests: viewTests, stats: viewStats, content: viewContent, groups: viewGroups };
-  $("#view").innerHTML = views[r.tool]();
+  let html = views[r.tool]();
+  if (["access", "works", "tests", "stats"].includes(r.tool)) html = html.replace("</header>", "</header>" + groupBar());
+  $("#view").innerHTML = html;
+  $("#view").querySelectorAll("details[data-keep]").forEach((d) => { if (keepOpen.has(d.dataset.keep)) d.open = true; });
+  if (location.hash === lastHash) window.scrollTo(0, y);   // same page refreshed: stay where the teacher was
+  lastHash = location.hash;
 }
+let lastHash = null;
 
 const pageHead = (eyebrow, title, lead = "") =>
   `<header class="page-h"><div class="pe">${eyebrow}</div><h2>${title}</h2>${lead ? `<p class="pl">${lead}</p>` : ""}</header>`;
@@ -363,6 +389,7 @@ document.addEventListener("change", (e) => {
   if (e.target.id === "show-correct") { T.showCorrect = e.target.checked; ls.set("showCorrect", T.showCorrect ? "1" : "0"); }
   if (e.target.id === "inc-drafts") { T.includeDrafts = e.target.checked; render(true); }
   if (e.target.id === "g-filter") { T.groupFilter = e.target.value; render(true); }
+  if (e.target.matches("select[data-gpick]")) setGroup(e.target.value);
   if (e.target.matches("select[data-move]")) guard(async () => {
     await updateDoc(doc(db, "users", e.target.dataset.move), { groupId: e.target.value });
     toast("The student has been moved to another group.");
@@ -410,11 +437,12 @@ document.addEventListener("click", (e) => {
     "load-users": () => loadAllUsers(),
     "test-open": () => openTest(b.dataset.key),
     "test-close": () => guard(async () => {
-      if (!confirm("Close the test? Students who have not finished will not be able to continue.")) return;
+      if (!confirm(`Close the test for group ${group()?.name || T.gid}? Students who have not finished will not be able to continue.`)) return;
       await updateDoc(doc(db, "groups", T.gid), { [`tests.${b.dataset.key}.open`]: false });
     }),
     "test-release": () => releaseTest(b.dataset.key),
     "test-unrelease": () => guard(async () => updateDoc(doc(db, "groups", T.gid), { [`tests.${b.dataset.key}.released`]: false })),
+    "set-group": () => setGroup(b.dataset.gid),
     "test-select": () => { T.testSel = b.dataset.key; subscribeAttempts(); render(true); },
     "test-reset": () => guard(async () => {
       if (!confirm("Delete this student's attempt so that they can take the test again?")) return;
@@ -611,7 +639,7 @@ function viewStats() {
       <td><button class="btn small" data-act="select-student" data-uid="${esc(p.s.uid)}">Answers</button></td></tr>`).join("")}
     </table></div>
 
-    <details><summary>All questions in order (${items.length})</summary>
+    <details data-keep="all-q"><summary>All questions in order (${items.length})</summary>
     <table class="t"><tr><th>Exercise</th><th>Question</th><th>Key</th><th>Correct</th><th>Wrong answers</th></tr>${items.map(itemRow).join("")}</table></details>`;
 }
 function heat(p, light) {
@@ -762,9 +790,10 @@ function viewGroups() {
     <input id="g-code" placeholder="Code (optional)" style="width:12em">
     <button class="btn primary" data-act="create-group">Create group</button>
   </div><p class="muted" style="margin:8px 0 0">If you leave the code empty, one will be generated.</p></div>
-  <table class="t"><tr><th>Code</th><th>Group</th><th>Students</th><th>Open units</th></tr>
-  ${T.groups.map((g) => `<tr><td><code>${esc(g.id)}</code></td><td>${esc(g.name)}</td><td class="num">${T.usersLoaded ? counts[g.id] || 0 : "…"}</td><td>${g.openUnits.map((id) => { const u = T.units.find((x) => x.id === id); return u ? unitNum(u) : esc(id); }).join(", ") || "—"}</td></tr>`).join("")
-    || `<tr><td colspan="4" class="muted">No groups yet.</td></tr>`}</table>
+  <table class="t"><tr><th>Code</th><th>Group</th><th>Students</th><th>Open units</th><th></th></tr>
+  ${T.groups.map((g) => `<tr class="${g.id === T.gid ? "sel" : ""}"><td><code>${esc(g.id)}</code></td><td>${esc(g.name)}</td><td class="num">${T.usersLoaded ? counts[g.id] || 0 : "…"}</td><td>${g.openUnits.map((id) => { const u = T.units.find((x) => x.id === id); return u ? unitNum(u) : esc(id); }).join(", ") || "—"}</td>
+      <td>${g.id === T.gid ? `<span class="pill on">current group</span>` : `<button class="btn small" data-act="set-group" data-gid="${esc(g.id)}">Work with this group</button>`}</td></tr>`).join("")
+    || `<tr><td colspan="5" class="muted">No groups yet.</td></tr>`}</table>
 
   <h3>Students</h3>
   <div class="row">Show: <select id="g-filter"><option value="">all groups</option>${T.groups.map((g) => `<option value="${esc(g.id)}" ${filter === g.id ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select>
@@ -859,7 +888,7 @@ function viewTests() {
       <td>${status}</td>
       <td class="row">
         ${cfg?.open ? `<button class="btn small" data-act="test-close" data-key="${esc(t.key)}">Close</button>`
-                    : `<button class="btn small good" data-act="test-open" data-key="${esc(t.key)}">${cfg ? "Open again" : "Open for the group"}</button>`}
+                    : `<button class="btn small good" data-act="test-open" data-key="${esc(t.key)}">${cfg ? "Open again" : `Open for ${esc(g.name)}`}</button>`}
         ${cfg?.released ? `<button class="btn small danger" data-act="test-unrelease" data-key="${esc(t.key)}">Hide results</button>`
                         : cfg ? `<button class="btn small" data-act="test-release" data-key="${esc(t.key)}">Check &amp; show results</button>` : ""}
         <button class="btn small" data-act="test-select" data-key="${esc(t.key)}">Details</button>
@@ -900,13 +929,13 @@ function testDetail(g) {
     <p class="muted">The table updates live. “Score” is preliminary; students see it only after “Check &amp; show results”.</p>
     <table class="t"><tr><th>Student</th><th>Status</th><th>Started</th><th>Time</th><th>Answered</th><th>Score</th><th>Released</th><th></th></tr>
     ${rows || `<tr><td colspan="8" class="muted">There are no students in this group yet.</td></tr>`}</table>
-    <details><summary>Questions with keys</summary>${preview}</details></div>`;
+    <details data-keep="test-keys-${esc(t.key)}"><summary>Questions with keys</summary>${preview}</details></div>`;
 }
 
 async function openTest(key) {
   const t = T.tests.find((x) => x.key === key);
   await guard(async () => {
-    if (!confirm(`Open “${t.title}” for the group now?\nEach student has ${t.minutes} minutes from the moment they click “Start the test”.`)) return;
+    if (!confirm(`Open “${t.title}” for group ${group()?.name || T.gid} now?\nEach student has ${t.minutes} minutes from the moment they click “Start the test”.`)) return;
     await updateDoc(doc(db, "groups", T.gid), {
       [`tests.${key}`]: { open: true, released: false, minutes: t.minutes, title: t.title, unitId: t.unitId, openedAt: serverTimestamp() },
     });
@@ -920,7 +949,7 @@ async function releaseTest(key) {
   await guard(async () => {
     const c = (await getDoc(doc(db, "testContent", key))).data();
     const atts = (await getDocs(query(collection(db, "testAttempts"), where("groupId", "==", T.gid), where("testKey", "==", key)))).docs.map((d) => d.data());
-    if (!confirm(`Check the test and show the results?\nAttempts: ${atts.length}. The test will be closed for the group.`)) return;
+    if (!confirm(`Check the test and show the results to group ${group()?.name || T.gid}?\nAttempts: ${atts.length}. The test will be closed for this group.`)) return;
     let batch = writeBatch(db), n = 0;
     for (const a of atts) {
       const items = {}; let score = 0, max = 0;
