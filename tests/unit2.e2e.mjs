@@ -180,6 +180,35 @@ assert.equal(await s.locator(`${sel("r2_3", "1")}.ok`).count(), 1);
 assert.equal(await s.locator(`${sel("r2_3", "2")}.bad`).count(), 1);
 assert.equal(await s.locator(`${sel("r2_7", "1")}.ok`).count(), 1, "phrase without the article is accepted");
 
+step("Supplementary reading: four articles, cards, tasks; links open outside");
+await s.goto(`${BASE}/index.html#u2/supplementary`);
+await s.waitForSelector("#ex-s2_8");
+await s.waitForTimeout(300);
+const stxt = await s.locator("#content").innerText();
+assert.ok(!ARROWS.test(stxt), "arrow symbol in Supplementary reading");
+assert.equal(await s.locator(".tnote, .keyhint").count(), 0);
+assert.equal(await s.locator("section.ex").count(), 8);
+assert.equal(await s.locator("section.fc").count(), 4);
+assert.equal(await s.locator(".rtext").count(), 4);
+assert.equal(await s.locator('.rtext a[target="_blank"]').count(), 8);
+assert.equal(await s.locator(".spk").count(), 1);
+for (const r of await s.locator(".rtext").all()) {
+  const w = (await r.innerText()).split(/\s+/).length;
+  assert.ok(w > 230 && w < 420, "article length " + w + " words");
+}
+await shot(s, "40-supplementary-full", true);
+await s.selectOption(sel("s2_2", "1"), keys.s2_2["1"]);
+await s.selectOption(sel("s2_3", "1"), keys.s2_3["1"]);
+await s.locator("#save-state", { hasText: /Saved|saved/ }).waitFor({ timeout: 6000 });
+await t.goto(`${BASE}/teacher.html#u2/supplementary`);
+await t.waitForSelector('[data-act="check-ex"][data-ex="s2_2"]');
+await t.click('[data-act="check-ex"][data-ex="s2_2"]');
+await t.waitForSelector('[data-act="uncheck-ex"][data-ex="s2_2"]');
+await t.click('[data-act="check-ex"][data-ex="s2_3"]');
+await t.waitForSelector('[data-act="uncheck-ex"][data-ex="s2_3"]');
+await s.waitForSelector("#ex-s2_2 .gap.ok", { timeout: 6000 });
+assert.equal(await s.locator(`${sel("s2_3", "1")}.ok`).count(), 1);
+
 step("Dark theme and phone width");
 await s.goto(`${BASE}/index.html#u2/warmup`);
 await s.waitForSelector("#ex-w2_11");
