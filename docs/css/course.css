@@ -592,3 +592,12 @@ ol.items.labelled .lab{display:inline-grid;place-items:center;width:24px;height:
  body:not(.teacher) .topbar .sp{display:none}
  .theme-btn{padding:6px 9px;font-size:12px;white-space:nowrap}
 }
+
+/* flashcards: term on the front; translation, definition and example on the back */
+.fc-card{height:300px}
+.fc-back{justify-content:center;gap:8px;overflow-y:auto}
+.fc-back .tr{font-size:19px}
+.fc-back .def{font-size:15px;line-height:1.5;color:var(--ink2);max-width:46ch}
+.fc-back .eg{font-size:15.5px;border-top:1px dashed var(--ochre2);padding-top:8px;max-width:48ch}
+.fc-front .pos{font-size:13px;font-style:italic;opacity:.8}
+@media(max-width:600px){.fc-card{height:340px}.fc-face{padding:18px}}

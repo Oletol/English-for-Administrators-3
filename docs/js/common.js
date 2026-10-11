@@ -439,8 +439,8 @@ function fcCard(c, i, n, style) {
     <span class="fc-face fc-front"><span class="lbl">Card ${i + 1}</span><span class="q">${esc(c.front)}</span></span></div>`;
   return `<button type="button" class="fc-card" data-fc="flip" aria-label="Turn the card over">
     <span class="fc-inner">
-      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span><span class="hint">Click to see the translation</span></span>
-      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span><span class="tr">${esc(c.back)}</span>${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
+      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span>${c.pos ? `<span class="pos">${esc(c.pos)}</span>` : ""}<span class="hint">Click to turn the card over</span></span>
+      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span><span class="tr">${esc(c.back)}</span>${c.def ? `<span class="def">${esc(c.def)}</span>` : ""}${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
     </span></button>`;
 }
 let fcWired = false;

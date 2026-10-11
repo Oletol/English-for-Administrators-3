@@ -13,15 +13,17 @@ const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
 const json = (v) => esc(JSON.stringify(v));
 
 // ================================================================== widget markup
-const PLACE = { footprint: "before", landsim: "before" };
+const PLACE = { footprint: "before", landsim: "before", waterprint: "before", basinsim: "before" };
 
 function widgetHTML(ex) {
   switch (ex.widget) {
     case "estsum": return `<div class="est-sum" data-w="estsum"></div>`;
     case "likert": return `<div class="wg"><div class="wg-out" data-w="likert"></div></div>`;
     case "sortboard": return `<div class="wg"><span class="bank-l">The board</span><div class="sort-board" data-w="sortboard" data-cats="${json((ex.options || []).map((o) => [o.id, o.text]))}"></div></div>`;
-    case "lawchart": return `<div class="wg"><span class="bank-l">The chart</span><div class="lf-ch" data-w="lawchart" data-scales="${json((ex.scales || []).map((s) => s.id))}" data-labels="${json((ex.items || []).filter((i) => i.label).map((i) => [i.id, i.label]))}"></div></div>`;
-    case "profile": return `<div class="wg"><button class="btn primary" type="button" data-prof-go>Show my profile</button><div class="prof" data-w="profile" data-map="${json(ex.profile || [])}"></div></div>`;
+    case "lawchart": return `<div class="wg"><span class="bank-l">The chart</span><div class="lf-ch" data-w="lawchart" data-chart="${json(ex.chart || {})}" data-scales="${json((ex.scales || []).map((s) => s.id))}" data-labels="${json((ex.items || []).filter((i) => i.label).map((i) => [i.id, i.label]))}"></div></div>`;
+    case "profile": return `<div class="wg"><button class="btn primary" type="button" data-prof-go>Show my profile</button><div class="prof" data-w="profile" data-map="${json(ex.profile || [])}" data-types="${json(ex.profileTypes || null)}" data-opp="${json(ex.profileOpp || null)}"></div></div>`;
+    case "waterprint": return waterprintHTML();
+    case "basinsim": return basinHTML();
     case "footprint": return footprintHTML();
     case "landsim": return landsimHTML();
     default: return "";
@@ -92,6 +94,7 @@ const REFRESH = {
   },
   lawchart(el, sec) {
     const [sx, sy] = JSON.parse(el.dataset.scales || "[]");
+    const C = Object.assign({ x: "stronger in law", y: "stronger in fairness", tl: "fair but unprotected", br: "legal but unfair" }, JSON.parse(el.dataset.chart || "{}"));
     const labels = JSON.parse(el.dataset.labels || "[]");
     const W = 280, P = 34, S = (W - P - 12) / 4;
     const X = (v) => P + (v - 1) * S, Y = (v) => W - P - (v - 1) * S;
@@ -101,9 +104,9 @@ const REFRESH = {
       g += `<text x="${X(i)}" y="${Y(1) + 14}" text-anchor="middle">${i}</text><text x="${X(1) - 10}" y="${Y(i) + 3}" text-anchor="middle">${i}</text>`;
     }
     g += `<line class="ax" x1="${X(1)}" y1="${Y(1)}" x2="${X(5)}" y2="${Y(1)}"/><line class="ax" x1="${X(1)}" y1="${Y(1)}" x2="${X(1)}" y2="${Y(5)}"/>`;
-    g += `<text x="${(X(1) + X(5)) / 2}" y="${W - 4}" text-anchor="middle">stronger in law</text>`;
-    g += `<text transform="translate(10,${(Y(1) + Y(5)) / 2}) rotate(-90)" text-anchor="middle">stronger in fairness</text>`;
-    g += `<g class="q"><text x="${X(1) + 4}" y="${Y(5) - 6}">fair but unprotected</text><text x="${X(5) - 4}" y="${Y(1) - 6}" text-anchor="end">legal but unfair</text></g>`;
+    g += `<text x="${(X(1) + X(5)) / 2}" y="${W - 4}" text-anchor="middle">${esc(C.x)}</text>`;
+    g += `<text transform="translate(10,${(Y(1) + Y(5)) / 2}) rotate(-90)" text-anchor="middle">${esc(C.y)}</text>`;
+    g += `<g class="q"><text x="${X(1) + 4}" y="${Y(5) - 6}">${esc(C.tl)}</text><text x="${X(5) - 4}" y="${Y(1) - 6}" text-anchor="end">${esc(C.br)}</text></g>`;
     const seen = {};
     labels.forEach(([id, lab]) => {
       const l = sec.querySelector(`select[data-item="${id}_${sx}"]`), f = sec.querySelector(`select[data-item="${id}_${sy}"]`);
@@ -116,13 +119,15 @@ const REFRESH = {
   },
   profile() {},
   footprint: fpCalc,
+  waterprint: wpCalc,
+  basinsim: basinCalc,
   landsim: simCalc,
 };
 
 // ================================================================== events
 document.addEventListener("input", (e) => {
   const t = e.target;
-  const w = t.closest?.('[data-w="footprint"],[data-w="landsim"]');
+  const w = t.closest?.('[data-w="footprint"],[data-w="landsim"],[data-w="waterprint"],[data-w="basinsim"]');
   if (w) KEEP.set(keepKey(w), $$("input.fp-in,input.sim-in", w).map((x) => x.value));
   if (t.matches?.(".est input[type=range]")) {
     const o = t.parentNode.querySelector(".est-o");
@@ -140,6 +145,8 @@ document.addEventListener("click", (e) => {
     showProfile(sec);
   }
   if (e.target.closest?.("[data-fp]")) fpButton(e.target.closest("[data-fp]"));
+  if (e.target.closest?.("[data-wp]")) wpButton(e.target.closest("[data-wp]"));
+  if (e.target.closest?.("[data-basin-reset]")) basinReset(e.target.closest("section.ex"));
   if (e.target.closest?.("[data-sim-reset]")) simReset(e.target.closest("section.ex"));
   const sb = e.target.closest?.("[data-spk-act]");
   if (sb) spkAction(sb);
@@ -186,7 +193,7 @@ function reveal(b) {
 }
 
 // ------------------------------------------------------------------ administrator profile (Ex 1.10)
-const PROF = {
+const PROF_LAND = {
   R: { n: "The Registrar", m: "“The record is the rule.”",
     s: "Predictability. You protect people from arbitrary decisions and make corruption harder, because the same rule applies to everyone who is on paper.",
     b: "The people who never got onto paper – customary holders, herders, the displaced. A perfect register of the wrong facts is still wrong." },
@@ -200,12 +207,15 @@ const PROF = {
     s: "The long view. You protect soil, water and forest, which take decades to recover and are easy to lose in a single decision.",
     b: "Present needs. A family that needs a house this winter may not be comforted by the condition of the floodplain in 2060." },
 };
-const OPP = { R: "M", M: "R", D: "S", S: "D" };
+const OPP_LAND = { R: "M", M: "R", D: "S", S: "D" };
 function showProfile(sec) {
   const box = sec.querySelector('[data-w="profile"]');
   const map = JSON.parse(box.dataset.map || "[]");
+  const PROF = JSON.parse(box.dataset.types || "null") || PROF_LAND;
+  const OPP = JSON.parse(box.dataset.opp || "null") || OPP_LAND;
+  const K = Object.keys(PROF);
   const groups = $$(".mcq", sec);
-  const sc = { R: 0, M: 0, D: 0, S: 0 };
+  const sc = Object.fromEntries(K.map((k) => [k, 0]));
   let n = 0;
   groups.forEach((g, i) => {
     const c = g.querySelector("input:checked");
@@ -215,9 +225,9 @@ function showProfile(sec) {
   });
   const total = map.length;
   if (n < total) { box.innerHTML = `<p class="miss">You have answered ${n} of the ${total} questions. Answer them all first.</p>`; return; }
-  const keys = ["R", "M", "D", "S"].sort((a, b) => sc[b] - sc[a]);
+  const keys = [...K].sort((a, b) => sc[b] - sc[a]);
   const top = keys[0], tie = sc[keys[1]] === sc[top], P = PROF[top];
-  const bars = ["R", "M", "D", "S"].map((k) => `<div class="pb${sc[k] === sc[top] ? " top" : ""}"><span>${PROF[k].n.replace("The ", "")}</span><span class="tr"><i style="width:${(sc[k] / total) * 100}%"></i></span><span>${sc[k]}</span></div>`).join("");
+  const bars = K.map((k) => `<div class="pb${sc[k] === sc[top] ? " top" : ""}"><span>${PROF[k].n.replace("The ", "")}</span><span class="tr"><i style="width:${(sc[k] / total) * 100}%"></i></span><span>${sc[k]}</span></div>`).join("");
   box.innerHTML = `<h5>${tie ? `A mixed profile: ${PROF[keys[0]].n} and ${PROF[keys[1]].n}` : P.n}</h5><p class="motto">${P.m}</p>${bars}
     <dl><dt>Your strength</dt><dd>${P.s}</dd><dt>Your blind spot</dt><dd>${P.b}</dd>
     <dt>The colleague you most need</dt><dd>${PROF[OPP[top]].n} – ${PROF[OPP[top]].m}</dd></dl>`;
@@ -468,4 +478,121 @@ function beep() {
     o.connect(g); g.connect(actx.destination);
     o.start(); o.stop(actx.currentTime + 0.35);
   } catch {}
+}
+
+
+// ------------------------------------------------------------------ water on your plate (Unit 2)
+// [food, one portion, kg (or litres) per portion, litres of water per kg, default portions a week]
+// Global averages: Mekonnen & Hoekstra (2010, 2012), Water Footprint Network
+const WFOODS = [["Beef", "150 g", 0.15, 15415, 2], ["Pork", "150 g", 0.15, 5988, 2], ["Chicken", "150 g", 0.15, 4325, 3],
+  ["Cheese", "30 g", 0.03, 3178, 5], ["Milk, kefir", "a glass, 250 ml", 0.25, 1020, 7], ["Eggs", "two eggs", 0.12, 3265, 3],
+  ["Bread", "100 g", 0.1, 1608, 10], ["Pasta (dry)", "75 g", 0.075, 1849, 3], ["Rice (dry)", "75 g", 0.075, 2497, 2],
+  ["Potatoes", "200 g", 0.2, 287, 4], ["Vegetables", "200 g", 0.2, 322, 7], ["Fruit", "one apple, 150 g", 0.15, 962, 7],
+  ["Beans, peas, lentils", "100 g", 0.1, 4055, 1], ["Coffee", "a cup, 7 g beans", 0.007, 18925, 10],
+  ["Tea", "a cup, 3 g leaves", 0.003, 8856, 7], ["Chocolate", "25 g", 0.025, 17196, 2], ["Sugar", "two spoons, 10 g", 0.01, 1782, 14]];
+function waterprintHTML() {
+  const rows = WFOODS.map((f, i) => `<tr><td>${f[0]}</td><td>${f[1]}</td><td><input class="fp-in" type="number" min="0" max="60" step="1" value="${f[4]}" data-i="${i}" aria-label="${f[0]} portions per week"></td><td class="fp-m" data-m="${i}">0</td></tr>`).join("");
+  return `<div class="wg" data-w="waterprint"><div class="tw"><table class="fp-t"><thead><tr><th>Food</th><th>One portion</th><th>Portions a week</th><th>litres a day</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="fp-tot"><b class="fp-total">0</b> litres of water a day hidden in your food</div><div class="fp-cmp"></div><div class="fp-bars"></div>
+    <div class="fp-btns"><button class="btn small" type="button" data-wp="veg">What if I ate no meat?</button><button class="btn small" type="button" data-wp="back">Back to my week</button></div>
+    <span class="src">Figures: global average water footprint per kilogram (rain water, irrigation water and the water needed to dilute pollution), Mekonnen &amp; Hoekstra (2010, 2012), Water Footprint Network. A kilogram of beef from a rain-fed pasture and one from an irrigated feedlot in a dry country put very different pressure on rivers.</span></div>`;
+}
+function wpCalc(el) {
+  const ins = $$(".fp-in", el);
+  const parts = [];
+  let tot = 0;
+  ins.forEach((inp) => {
+    const i = +inp.dataset.i, f = WFOODS[i], n = Math.max(0, +inp.value || 0);
+    const l = (n * f[2] * f[3]) / 7;
+    tot += l; parts.push([f[0], l]);
+    el.querySelector(`.fp-m[data-m="${i}"]`).textContent = fmtN(l);
+  });
+  el.querySelector(".fp-total").textContent = fmtN(tot);
+  const year = tot * 365;
+  const ru = (year * 146e6) / 1e12;   // km³ a year
+  el.querySelector(".fp-cmp").innerHTML =
+    `<div><span>bathtubs a day (about 150 litres each)</span><b>${(tot / 150).toFixed(1)}</b></div>`
+    + `<div><span>times the water you drink (about 2 litres a day)</span><b>${fmtN(tot / 2)}</b></div>`
+    + `<div><span>Olympic swimming pools a year (2.5 million litres)</span><b>${(year / 2.5e6).toFixed(2)}</b></div>`
+    + `<div><span>if 146 million people ate like you, a year</span><b>${ru.toFixed(0)} km³</b></div>`
+    + `<div><span>… compared with the Volga, which carries about 250 km³ a year to the Caspian</span><b>${Math.round((ru / 250) * 100)}%</b></div>`;
+  parts.sort((a, b) => b[1] - a[1]);
+  el.querySelector(".fp-bars").innerHTML = `<span class="bank-l">Where your water goes</span>` + parts.slice(0, 6).filter((p) => p[1] > 0)
+    .map((p) => { const pc = tot ? (p[1] / tot) * 100 : 0; return `<div class="br"><span>${esc(p[0])}</span><span class="tr"><i style="width:${pc.toFixed(1)}%"></i></span><span class="pc">${Math.round(pc)}%</span></div>`; }).join("");
+}
+function wpButton(b) {
+  const el = b.closest('[data-w="waterprint"]');
+  const ins = $$(".fp-in", el);
+  if (b.dataset.wp === "veg") {
+    if (!el._saved) el._saved = ins.map((x) => x.value);
+    ins.forEach((x) => { if (+x.dataset.i <= 2) x.value = 0; });
+    if (ins[12] && +ins[12].value < 3) ins[12].value = 3;
+  } else if (el._saved) { ins.forEach((x, i) => (x.value = el._saved[i])); el._saved = null; }
+  KEEP.set(keepKey(el), ins.map((x) => x.value));
+  wpCalc(el);
+}
+
+// ------------------------------------------------------------------ one river in a dry year (Unit 2)
+// 100 units of water this month; in a normal year the river brings about 150.
+const BCOL = { farm: "#8FAF5E", city: "#2C6B7E", mine: "#8A6A43", river: "#5FA8B8", down: "#A8743A", store: "#6E3B5E" };
+const BLAB = { farm: "Irrigation", city: "City", mine: "Copper mine", river: "River and delta", down: "Downstream country", store: "Reservoir" };
+const B0 = { farm: 45, city: 10, mine: 10, river: 15, down: 15, store: 5 };
+const BROWS = [["farm", "Irrigation for 2,000 farms"], ["city", "Drinking water for a city of 400,000"], ["mine", "A copper mine (export earnings, 1,500 jobs)"],
+  ["river", "Water left in the river for fish and the delta"], ["down", "Delivery to the downstream country"], ["store", "Water kept in the reservoir for winter electricity"]];
+function basinHTML() {
+  return `<div class="wg" data-w="basinsim"><div class="sim"><div class="sim-left">
+    ${BROWS.map(([u, l]) => `<div class="sim-r"><label>${l}</label><output class="sim-v">${B0[u]} units</output><input type="range" class="sim-in" data-u="${u}" min="0" max="100" step="5" value="${B0[u]}" aria-label="${l}"></div>`).join("")}
+    <div class="sim-left-f"><span class="sim-rest"></span><button class="btn small" type="button" data-basin-reset>Back to the usual plan</button></div></div>
+    <div class="sim-right"><div class="sim-k"></div><div class="sim-st"></div><div class="sim-warn"></div></div></div>
+    <span class="src">The river, the treaty and all the numbers are invented for the exercise. The model is a tool for arguing, not a forecast.</span></div>`;
+}
+function basinReset(sec) {
+  $$(".sim-in", sec).forEach((r) => (r.value = B0[r.dataset.u]));
+  const el = sec.querySelector('[data-w="basinsim"]');
+  KEEP.delete(keepKey(el));
+  basinCalc(el);
+}
+function basinCalc(el) {
+  const v = {};
+  $$(".sim-in", el).forEach((r) => { v[r.dataset.u] = +r.value; r.parentNode.querySelector(".sim-v").textContent = r.value + " units"; });
+  const sum = Object.values(v).reduce((a, b) => a + b, 0);
+  const rest = el.querySelector(".sim-rest");
+  rest.textContent = sum === 100 ? "All 100 units allocated" : sum < 100 ? `${100 - sum} units still to allocate` : `${sum - 100} units more than the river carries`;
+  rest.className = "sim-rest " + (sum === 100 ? "ok" : "bad");
+  const harvest = Math.min(100, Math.round((v.farm / 60) * 100));
+  const people = Math.round(Math.min(1, v.city / 12) * 400) * 1000;
+  const jobs = Math.round(Math.min(1, v.mine / 10) * 1500);
+  const health = v.river >= 20 ? "good" : v.river >= 10 ? "under stress" : "failing";
+  const quota = 30, share = 20;   // the 1992 treaty fixed 30 units; a share of the flow would be 20% of 100
+  const power = Math.min(100, Math.round((v.store / 15) * 100));
+  const cells = [];
+  ["river", "down", "farm", "city", "mine", "store"].forEach((k) => { for (let i = 0; i < v[k] && cells.length < 100; i++) cells.push(BCOL[k]); });
+  while (cells.length < 100) cells.push("");
+  const map = `<div class="sim-map" title="each square is one unit of water">${cells.map((c) => `<i${c ? ` style="background:${c}"` : ""}></i>`).join("")}</div>`;
+  const leg = `<div style="font-size:12px;color:var(--mut);margin:-2px 0 8px">${Object.keys(BCOL).map((k) => `<span style="white-space:nowrap;margin-right:10px"><span class="lg" style="background:${BCOL[k]}"></span>${BLAB[k]}</span>`).join("")}</div>`;
+  el.querySelector(".sim-k").innerHTML = map + leg + `<h6>This month in numbers</h6>`
+    + `<div class="kv"><span>Harvest compared with a normal year</span><b>${harvest}%</b></div>`
+    + `<div class="kv"><span>City residents with water all day</span><b>${fmtN(people)} of 400 000</b></div>`
+    + `<div class="kv"><span>Jobs kept at the mine</span><b>${fmtN(jobs)}</b></div>`
+    + `<div class="kv"><span>State of the river and the delta</span><b>${health}</b></div>`
+    + `<div class="kv"><span>Treaty, fixed quota of 30 units</span><b>${v.down >= quota ? "met" : `short by ${quota - v.down}`}</b></div>`
+    + `<div class="kv"><span>Treaty, if it were 20% of the flow</span><b>${v.down >= share ? "met" : `short by ${share - v.down}`}</b></div>`
+    + `<div class="kv"><span>Winter electricity secured</span><b>${power}%</b></div>`;
+  const st = [["Farmers", clamp((v.farm / 60) * 100)], ["City residents", clamp((v.city / 12) * 100)], ["The mining company", clamp((v.mine / 10) * 100)],
+    ["Fishers and delta villages", clamp((v.river / 20) * 100)], ["The downstream country", clamp((v.down / quota) * 100)], ["The energy ministry", clamp((v.store / 15) * 100)]];
+  let avg = 0, min = st[0];
+  st.forEach((x) => { avg += x[1]; if (x[1] < min[1]) min = x; });
+  avg = Math.round(avg / st.length);
+  el.querySelector(".sim-st").innerHTML = `<h6>Who is satisfied?</h6>` + st.map((x) => {
+    const c = x[1] >= 67 ? "var(--green)" : x[1] >= 34 ? "var(--ochre)" : "var(--clay)";
+    return `<div class="br"><span>${x[0]}</span><span class="tr"><i style="width:${x[1]}%;background:${c}"></i></span><span class="pc">${x[1]}</span></div>`;
+  }).join("") + `<p style="font-size:13.5px;margin:8px 0 0">Average satisfaction <b>${avg}</b> · worst-off group: <b>${min[0]}</b> (${min[1]})</p>`;
+  const w = [];
+  if (sum !== 100) w.push("The plan does not add up to 100 units.");
+  if (v.city < 8) w.push("The city goes onto rationing: taps run for six hours a day. Who will the mayor blame?");
+  if (v.river < 10) w.push("With so little water in the river, salinity and pollutants from the mine concentrate downstream.");
+  if (v.down < 20) w.push("The downstream country protests that the treaty is being broken.");
+  if (v.farm < 25) w.push("Farmers start pumping groundwater without permits, and the aquifer falls.");
+  if (v.store > 20) w.push("Holding back this much water for winter power empties the river in summer.");
+  el.querySelector(".sim-warn").innerHTML = w.map((x) => `<p>${x}</p>`).join("");
 }
