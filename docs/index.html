@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Course</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script>try{var t=localStorage.getItem("theme")||(matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light");document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<link rel="stylesheet" href="css/course.css">
+</head>
+<body>
+<div id="boot">Loading…</div>
+
+<div id="auth-screen" class="auth-wrap" hidden></div>
+<button class="theme-btn auth-theme" type="button" data-theme-toggle id="auth-theme">Dark theme</button>
+
+<div id="app" hidden>
+  <div class="scrim"></div>
+  <aside class="sb">
+    <div class="sb-top">
+      <div class="ttl">
+        <div class="crs" data-course-title></div>
+        <h1>Course Workbook</h1>
+        <div class="lvl" id="me-group"></div>
+      </div>
+      <button class="sb-hide" type="button" data-sb-toggle title="Hide the panel">✕</button>
+    </div>
+    <nav class="sb-nav">
+      <div id="test-nav-wrap" hidden><div class="sb-label">Tests</div><div id="test-nav"></div></div>
+      <div class="sb-label">Units</div>
+      <div id="unit-nav"></div>
+    </nav>
+    <div class="sb-foot">
+      <div class="who"><b id="me-name"></b><span id="me-email"></span></div>
+      <button type="button" id="logout">Sign out</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="burger" type="button" data-sb-toggle aria-label="Show or hide the panel" title="Show or hide the panel">&#9776;</button>
+      <div class="crumb" id="crumb"></div>
+      <div class="sp"></div>
+      <button class="theme-btn" type="button" data-theme-toggle>Dark theme</button>
+    </div>
+    <div class="wrap">
+      <div id="unit-bar"></div>
+      <div id="content"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="js/student.js"></script>
+</body></html>
