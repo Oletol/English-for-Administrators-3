@@ -23,13 +23,14 @@ const SENT = Symbol("sentinel");
 export const serverTimestamp = () => ({ [SENT]: "ts" });
 export const arrayUnion = (...a) => ({ [SENT]: "union", a });
 export const arrayRemove = (...a) => ({ [SENT]: "remove", a });
+export const deleteField = () => ({ [SENT]: "delete" });
 function resolve(v, old) {
   if (v && v[SENT] === "ts") return { __ts: Date.now() };
   if (v && v[SENT] === "union") { const r = [...(old || [])]; v.a.forEach((x) => r.includes(x) || r.push(x)); return r; }
   if (v && v[SENT] === "remove") return (old || []).filter((x) => !v.a.includes(x));
   if (v instanceof Date) return { __ts: v.getTime() };
   if (Array.isArray(v)) return v.map((x) => resolve(x));
-  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, resolve(x, old?.[k])]));
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v).filter(([, x]) => !(x && x[SENT] === "delete")).map(([k, x]) => [k, resolve(x, old?.[k])]));
   return v;
 }
 
@@ -102,7 +103,8 @@ function applyPaths(obj, data) {
     let cur = out;
     for (const p of parts.slice(0, -1)) { cur[p] ??= {}; cur = cur[p]; }
     const last = parts.at(-1);
-    cur[last] = resolve(v, cur[last]);
+    if (v && v[SENT] === "delete") delete cur[last];
+    else cur[last] = resolve(v, cur[last]);
   }
   return out;
 }

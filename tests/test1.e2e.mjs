@@ -19,7 +19,7 @@ const browser = await chromium.launch({
   args: ["--autoplay-policy=no-user-gesture-required"],
 }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-await ctx.route("**/js/fb.js", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
+await ctx.route("**/js/fb.js*", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
 await ctx.route("**/media/u1/test1-listening.mp3", (r) => r.fulfill({ contentType: "audio/wav", body: readFileSync(WAV) }));
 const errors = [];
 const page = async (url) => {

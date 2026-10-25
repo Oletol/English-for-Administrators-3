@@ -12,7 +12,7 @@ const course = readFileSync(new URL("../content-private/test-fixture.json", impo
 
 const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" }).catch(() => chromium.launch());
 const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
-await ctx.route("**/js/fb.js", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
+await ctx.route("**/js/fb.js*", (r) => r.fulfill({ contentType: "text/javascript", body: mock }));
 // LanguageTool: подставной ответ (в песочнице нет доступа к api.languagetool.org)
 let ltCalls = 0;
 await ctx.route("https://api.languagetool.org/**", async (r) => {
@@ -95,6 +95,22 @@ await s1.waitForSelector("#ex-r2");
 
 step("Студент 1 отвечает; черновик сохраняется");
 const sel = (ex, it) => `[data-ex="${ex}"][data-item="${it}"]`;
+
+// "Done" under every exercise of the unit: the unit can be submitted only after that
+async function markAllDone(p, unitId = "u1") {
+  const secs = await p.evaluate((u) => [...document.querySelectorAll(`.sb-unit .sb-item[href^="#${u}/"]`)].map((a) => a.getAttribute("href")), unitId);
+  for (const h of secs) {
+    await p.evaluate((x) => { location.hash = x; }, h);
+    await p.waitForTimeout(150);
+    for (let i = 0; i < 60; i++) {
+      const b = p.locator('[data-done][data-v="1"]').first();
+      if (!(await b.count())) break;
+      await b.click();
+      await p.waitForTimeout(40);
+    }
+  }
+  await p.waitForSelector("#submit-unit:not([disabled])");
+}
 for (const [i, v] of [["1", "c"], ["2", "b"], ["3", "f"], ["4", "d"]]) await s1.selectOption(sel("r2", i), v);
 await s1.check(`${sel("r3", "1")}[value=B]`);
 await s1.check(`${sel("r3", "2")}[value=A]`);
@@ -253,6 +269,7 @@ await t.waitForSelector("text=Anna Ivanova");
 await t.waitForSelector(".pill.warn:text('draft')");
 
 step("Студент 1 сдаёт работу");
+await markAllDone(s1);
 await s1.click("#submit-unit");
 await s1.waitForSelector(".ub-sub");
 await s1.click('.sb-item:has-text("Grammar in Use")');
@@ -272,6 +289,7 @@ await s2.click('.sb-uh[data-unit="u1"]');
 await s2.click('.sb-item:has-text("Grammar in Use")');
 await s2.fill(sel("g1", "1"), "sends");
 await s2.fill(sel("g1", "2"), "is give");
+await markAllDone(s2);
 await s2.click("#submit-unit");
 await s2.waitForSelector(".ub-sub");
 

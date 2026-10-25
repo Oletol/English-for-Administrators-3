@@ -607,3 +607,60 @@ ol.items.labelled .lab{display:inline-grid;place-items:center;width:24px;height:
 .gbar-l{font-weight:700;color:var(--ink)}
 .gbar select{font:inherit;font-weight:700;font-size:15px;color:var(--ink);border:1px solid var(--line);border-radius:9px;padding:5px 10px;background:var(--card)}
 .gbar .muted{font-size:12.5px}
+
+/* ---------------- lesson plan: In-Class / HA, "Done", class statistics, attendance ---------------- */
+.ex-lab{font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;border-radius:14px;padding:3px 9px;flex:none;border:1px solid var(--line);background:var(--bg2);color:var(--ink2)}
+.ex-lab.class{background:var(--soft);color:var(--deep);border-color:color-mix(in srgb,var(--deep) 30%,transparent)}
+.ex-lab.home{background:var(--ochre-s);color:var(--ochre);border-color:color-mix(in srgb,var(--ochre) 35%,transparent)}
+.ex-lab.skip{color:var(--mut);background:transparent;border-style:dashed}
+/* the student's "Done" under each exercise */
+.ex-done{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0;padding:11px 18px;border-top:1px solid var(--line2);background:var(--bg2);font-size:13.5px}
+.ex-done.on{background:var(--ok2)}
+.ex-done .ok{font-weight:800;color:var(--ok)}
+.ex-done .btn{margin-left:auto}
+.ex-done:not(.on) .btn{margin-left:0}
+.ex-absent{margin:12px 18px 0;padding:8px 12px;border-left:3px solid var(--ochre);background:var(--ochre-s);border-radius:0 8px 8px 0;font-size:13.5px;color:var(--ink2)}
+.ub-prog{font-size:13.5px;color:var(--ink2);margin-left:auto}
+.ub-prog.all b{color:var(--ok)}
+.ub-left{flex:1 1 100%;font-size:13.5px;color:var(--ink2)}
+.ub-left summary{cursor:pointer;color:var(--ochre);font-weight:650}
+.ub-left ol{margin:6px 0 0;padding-left:22px;line-height:1.7}
+/* teacher: the bar at the top of each exercise */
+.stats-bar{background:var(--plum-s);border-color:color-mix(in srgb,var(--plum) 30%,var(--line))}
+.ex-plan{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;padding:8px 18px;border-bottom:1px solid var(--line2);background:color-mix(in srgb,var(--plum-s) 60%,var(--card));font-size:13px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:9px;overflow:hidden;background:var(--card)}
+.seg button{font:inherit;font-size:12px;font-weight:700;padding:4px 11px;border:0;border-right:1px solid var(--line);background:transparent;color:var(--ink2);cursor:pointer}
+.seg button:last-child{border-right:0}
+.seg button:hover{color:var(--acc)}
+.seg button.on.class{background:var(--deep);color:var(--on-acc)}
+.seg button.on.home{background:var(--ochre);color:var(--on-acc)}
+.seg button.on.skip{background:var(--mut);color:var(--on-acc)}
+.cov{display:inline-flex;align-items:center;gap:6px;font-weight:700;color:var(--ink2);cursor:pointer}
+.cov input{accent-color:var(--ok);width:16px;height:16px;margin:0}
+.cov-date{font:inherit;font-size:12.5px;padding:2px 6px;border:1px solid var(--line);border-radius:7px;background:var(--field);color:var(--ink)}
+.ex-stats{display:inline-flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-left:auto;color:var(--ink2)}
+.ex-stats b{color:var(--ink)}
+.st{display:inline}
+.st-b{display:inline-block;font-family:var(--mono);font-size:12px;font-weight:700;line-height:1.6;border-radius:12px;padding:0 8px;margin-left:8px;white-space:nowrap;border:1px solid transparent}
+.ex-stats .st-b{margin-left:0}
+.st-b.good{background:var(--ok2);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.st-b.mid{background:var(--ochre-s);color:var(--ochre);border-color:color-mix(in srgb,var(--ochre) 35%,transparent)}
+.st-b.low{background:var(--bad2);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 35%,transparent)}
+.st-b.none{font-family:var(--sans);font-weight:600;color:var(--mut);background:var(--bg2)}
+.st-w{font-size:12.5px;color:var(--bad);margin-left:6px;font-family:var(--sans);line-height:1.4}
+.st-wa{font-style:italic}
+.st-wa::before{content:"“"}
+.st-wa::after{content:"”"}
+/* attendance journal */
+table.jt th.jd{text-align:center;white-space:nowrap;vertical-align:top}
+table.jt th.jd span{display:block;font-size:12.5px;letter-spacing:.02em}
+table.jt th.jd small{display:block;text-transform:none;letter-spacing:0;font-weight:600;font-size:11px}
+.jdel{font:inherit;font-size:10.5px;font-weight:600;text-transform:none;letter-spacing:0;border:0;background:none;color:var(--mut);cursor:pointer;padding:2px 0;text-decoration:underline}
+.jdel:hover{color:var(--bad)}
+td.att-c{text-align:center;padding:5px 6px!important}
+.att{font:inherit;font-size:12px;font-weight:700;min-width:5.6em;padding:3px 8px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--mut);cursor:pointer}
+.att.p{background:var(--ok2);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent)}
+.att.a{background:var(--bad2);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 45%,transparent)}
+.j-lessons{padding-left:20px;line-height:1.75;font-size:14.5px}
+@media (max-width:640px){.ex-stats{margin-left:0}.ub-prog{margin-left:0}}
+section.ex{scroll-margin-top:84px}

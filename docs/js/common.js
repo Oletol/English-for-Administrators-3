@@ -98,27 +98,52 @@ export function isCorrect(given, key, opts = {}) {
   return gs.some((x) => keysN.has(x));
 }
 
+// ------------------------------------------------------------------ lesson plan, "Done", attendance
+// (the same storage as in English for Administrators_1; none of it needs a change to the database rules)
+// group.plan[unitId][exId] = {as: "class" | "home", done: true, date: "2026-10-21"}   In-Class / HA and the teacher's tick
+// answerKeys/journal~<groupId> = {groupId, lessons: {"2026-10-21": {absent: [uid]}}}   attendance, teacher only
+// answers._done[exId] = "1"                                                           the student clicked "Done"
+export const DONE = "_done";
+export const doneMap = (answers) => (answers && typeof answers[DONE] === "object" && answers[DONE]) || {};
+export const ABSENT_FACTOR = 0.25;
+export const PLAN_LABEL = { class: "In-Class", home: "HA" };
+export const round2 = (x) => Math.round(Number(x || 0) * 100) / 100;
+export const fmtDate = (iso) => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || ""); };
+export const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+// the tag in the exercise header: "In-Class" / "HA", with a tick when the teacher has marked it as done
+export function planTag(p) {
+  if (!p?.as) return null;
+  return { text: `${p.done ? "✓ " : ""}${PLAN_LABEL[p.as] || ""}`, cls: p.as === "home" ? "home" : "class",
+    title: `${p.as === "home" ? "Home assignment" : "Classwork"}${p.done && p.date ? " · done " + fmtDate(p.date) : ""}` };
+}
+// the exercise has something to answer, so the student marks it as done
+export const hasItems = (ex) => (ex.items || []).length > 0;
+// exercises left out of the class statistics: translations (checked by the teacher) and "stats": false
+export const noStats = (ex) => ex.stats === false || (ex.stats !== true && /translat|equivalent|from russian/i.test(`${ex.title || ""} ${String(ex.rubric || "").replace(/<[^>]*>/g, "")}`));
+
 // Автопроверка: answers = {exId:{itemId:value}}, keys = {exId:{itemId:answer}}
-export function gradeAuto(content, answers, keys) {
+// factors = {exId: 0.25}: each point of that exercise counts as 0.25 (missed classwork)
+export function gradeAuto(content, answers, keys, factors = {}) {
   const items = {};
   let score = 0, max = 0;
   for (const ex of exercisesOf(content)) {
     if (!isAuto(ex)) continue;
     items[ex.id] = {};
+    const f = factors[ex.id] ?? 1;
     for (const it of scoredItems(ex)) {
       const given = answers?.[ex.id]?.[it.id] ?? "";
       const key = keys?.[ex.id]?.[it.id];
       const ok = isCorrect(given, key, { lenient: ex.lenient });
       items[ex.id][it.id] = { given, ok, correct: firstKey(key) };
       max += 1;
-      if (ok) score += 1;
+      if (ok) score += f;
     }
   }
-  return { items, score, max };
+  return { items, score: round2(score), max };
 }
 
 // Check one exercise (used when the teacher checks a single exercise)
-export function gradeExercise(ex, answers, keys) {
+export function gradeExercise(ex, answers, keys, factor = 1) {
   const items = {};
   let score = 0;
   const list = scoredItems(ex);
@@ -127,14 +152,15 @@ export function gradeExercise(ex, answers, keys) {
     const key = keys?.[it.id];
     const ok = isCorrect(given, key, { lenient: ex.lenient });
     items[it.id] = { given, ok, correct: firstKey(key) };
-    if (ok) score += 1;
+    if (ok) score += factor;
   }
-  return { items, score, max: list.length };
+  return { items, score: round2(score), max: list.length };
 }
 
 // Итоговый документ results/{unitId__uid}
-export function buildResult({ sub, content, keys, manual = {}, showCorrect = true }) {
-  const auto = gradeAuto(content, sub.answers, keys);
+// factors: classwork the student missed (absent on the day it was done in class) counts at 25%
+export function buildResult({ sub, content, keys, manual = {}, showCorrect = true, factors = {} }) {
+  const auto = gradeAuto(content, sub.answers, keys, factors);
   if (!showCorrect)
     for (const ex of Object.values(auto.items)) for (const r of Object.values(ex)) delete r.correct;
   let mScore = 0, mMax = 0, pending = 0;
@@ -143,16 +169,18 @@ export function buildResult({ sub, content, keys, manual = {}, showCorrect = tru
     for (const it of scoredItems(ex)) {
       mMax += itemMax(ex, it);
       const g = manual?.[ex.id]?.[it.id];
-      if (g && g.score !== null && g.score !== "" && g.score !== undefined) mScore += Number(g.score);
+      if (g && g.score !== null && g.score !== "" && g.score !== undefined) mScore += Number(g.score) * (factors[ex.id] ?? 1);
       else pending += 1;
     }
   }
+  const used = Object.fromEntries(Object.entries(factors).filter(([id, f]) => f !== 1 && exercisesOf(content).some((e) => e.id === id)));
   return {
     uid: sub.uid, groupId: sub.groupId, unitId: sub.unitId,
     auto: auto.items, manual,
     autoScore: auto.score, autoMax: auto.max,
-    manualScore: mScore, manualMax: mMax, manualPending: pending,
-    score: auto.score + mScore, max: auto.max + mMax,
+    manualScore: round2(mScore), manualMax: mMax, manualPending: pending,
+    score: round2(auto.score + mScore), max: auto.max + mMax,
+    factors: used,
     showCorrect,
   };
 }
@@ -204,7 +232,8 @@ export function renderExercise(ex, o = {}) {
     const mark = r ? (r.ok ? "ok" : "bad") : "";
     const attrs = `data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis}`;
     const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(showAns(ex, r.correct))}</span>` : "";
-    const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "";
+    const keyHint = (o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "")
+      + (o.itemStat ? o.itemStat(it.id) : "");
     let body = "";
     const play = it.audio ? itemPlayButton(it.audio, ex.once) : "";
     // "because …": an extra line that is saved but not marked (odd one out with a reason)
@@ -227,7 +256,7 @@ export function renderExercise(ex, o = {}) {
         const cls = r && val === L ? (r.ok ? "ok" : "bad") : (o.key && o.key[it.id] === L ? "right" : "");
         return `<label class="${cls}"><input type="radio" name="${esc(name)}" value="${L}" ${val === L ? "checked" : ""} ${attrs}><span class="l">${L.toLowerCase()}</span><span>${t}</span></label>`;
       }).join("");
-      body = `${it.text}<div class="mcq ${ex.columns === 2 ? "cols2" : ""} ${ex.scale ? "scale" : ""}">${opts}</div>${corr}`;
+      body = `${it.text}<div class="mcq ${ex.columns === 2 ? "cols2" : ""} ${ex.scale ? "scale" : ""}">${opts}</div>${corr}${o.itemStat ? o.itemStat(it.id) : ""}`;
     } else if (kind === "estimate") {
       // a slider (or a short list) and a "Reveal" button; the figure is part of the book, not a key
       const shown = a[it.id + "_shown"] === "1" || teacher;
@@ -291,7 +320,8 @@ export function renderExercise(ex, o = {}) {
       const r = o.auto?.[it.id];
       const mark = r ? (r.ok ? "ok" : "bad") : "";
       const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(r.correct)}</span>` : "";
-      const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "";
+      const keyHint = (o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "")
+        + (o.itemStat ? o.itemStat(it.id) : "");
       return `<li><span class="m-word">${it.text}</span> <input class="gap ${mark}" style="width:5ch" maxlength="2" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis} value="${esc(val)}" ${NOAUTO}>${corr}${keyHint}</li>`;
     }).join("");
     const right = (ex.options || []).map((op) => `<li>${op.text}</li>`).join("");
@@ -299,16 +329,18 @@ export function renderExercise(ex, o = {}) {
     body = `<div class="match"><ol class="m-left">${left}</ol><ol class="m-right" type="a">${right}</ol></div>`
       + (rest.length ? `<ol class="items" start="${(ex.items || []).length - rest.length + 1}">${rest.map(itemHTML).join("")}</ol>` : "");
   }
-  const tag = o.tag ? `<span class="ex-tag">${o.tag}</span>` : "";
+  const tag = (o.label ? `<span class="ex-lab ${esc(o.label.cls || "")}" title="${esc(o.label.title || "")}">${esc(o.label.text)}</span>` : "")
+    + (o.tag ? `<span class="ex-tag">${o.tag}</span>` : "");
   const wTop = ex.widget && widgetPlace(ex) === "before" ? widgetHTML(ex) : "";
   const wEnd = ex.widget && widgetPlace(ex) === "after" ? widgetHTML(ex) : "";
   const timers = (ex.timers || []).map((t, i) => speakingHTML(t, `${ex.id}-${i}`)).join("");
   return `${o.before || ""}<section class="ex" id="ex-${esc(ex.id)}" data-exid="${esc(ex.id)}">
   <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span>${tag}${scoreLine}</div>
+  ${o.top || ""}
   ${ex.rubric ? `<p class="ex-i">${ex.rubric}</p>` : ""}
   ${ex.display === "letters" ? "" : options}${bank}
   ${ex.html ? `<div class="wg">${ex.html}</div>` : ""}
-  ${wTop}${body}${ex.htmlAfter ? `<div class="wg">${ex.htmlAfter}</div>` : ""}${wEnd}${tailHTML}${timers}
+  ${wTop}${body}${ex.htmlAfter ? `<div class="wg">${ex.htmlAfter}</div>` : ""}${wEnd}${tailHTML}${timers}${o.footer || ""}
 </section>`;
 }
 

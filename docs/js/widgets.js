@@ -5,7 +5,7 @@
 //    administrator profile, a hundred hectares, law and fairness chart).
 // Everything is drawn from the exercise data, so the same code works in the student book
 // and in the Teacher's Edition.
-import { registerWidgets, registerSpeaking, esc } from "./common.js";
+import { registerWidgets, registerSpeaking, esc } from "./common.js?v=20261021a";
 
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const fmtN = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
@@ -385,7 +385,11 @@ function syncSpk(el) {
   const sb = el.querySelector('[data-spk-act="start"]');
   if (sb) sb.textContent = st.running ? "Pause" : st.left < st.sec && st.left > 0 ? "Continue" : "Start";
   const rb = el.querySelector('[data-spk-act="rec"]');
-  if (rb) { rb.classList.toggle("on", !!st.rec); rb.querySelector(".rl").textContent = st.rec ? "Stop recording" : "Record"; }
+  if (rb) {
+    rb.classList.toggle("on", !!st.rec);
+    rb.disabled = !!st.starting;
+    rb.querySelector(".rl").textContent = st.starting ? "Starting the microphone…" : st.rec ? "Stop recording" : "Record";
+  }
   const box = el.querySelector(".spk-takes");
   if (box) {
     const sig = st.takes.map((t) => t.url).join("|") + st.err;
@@ -426,48 +430,89 @@ async function spkAction(b) {
   syncKey(key);
 }
 
-function pickType() {
+// Formats to try, best first. Safari records natively in MP4 (AAC) and some versions claim WebM support
+// but then refuse to start, so Safari tries MP4 first. If a format fails, the next one is tried,
+// and in the end the browser's own default.
+function typeCandidates() {
   if (typeof MediaRecorder === "undefined") return null;
-  for (const t of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg;codecs=opus"])
-    if (MediaRecorder.isTypeSupported?.(t)) return t;
-  return "";
+  const ua = navigator.userAgent || "";
+  const safari = /Safari\//.test(ua) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|OPR\/|YaBrowser\//.test(ua);
+  const list = safari
+    ? ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus", "audio/webm"]
+    : ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
+  const ok = list.filter((t) => { try { return MediaRecorder.isTypeSupported?.(t); } catch { return false; } });
+  return [...ok, ""];
+}
+function releaseMic(st) {
+  st.stream?.getTracks().forEach((t) => { try { t.stop(); } catch {} });
+  st.stream = null;
 }
 async function startRec(key) {
   const st = SPK.get(key);
+  if (st.rec || st.starting) return;            // a second click while the browser is still asking for the microphone
   st.err = "";
-  const type = pickType();
-  if (type === null || !navigator.mediaDevices?.getUserMedia) { st.err = "This browser cannot record sound. Please try Chrome, Edge, Firefox or Safari."; return; }
+  const types = typeCandidates();
+  if (types === null || !navigator.mediaDevices?.getUserMedia) { st.err = "This browser cannot record sound. Please try Chrome, Edge, Firefox or Safari."; return; }
+  st.starting = true;
+  syncKey(key);
   try {
-    st.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    st.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
   } catch (e) {
-    st.err = "The microphone is not available. Allow access to the microphone in the browser (the icon in the address bar) and try again.";
+    st.starting = false;
+    st.err = e?.name === "NotFoundError"
+      ? "No microphone was found. Connect a microphone or headset and try again."
+      : "The microphone is not available. Allow access to the microphone in the browser (the icon in the address bar) and try again.";
     return;
   }
-  const rec = new MediaRecorder(st.stream, type ? { mimeType: type } : undefined);
+  // start a recorder in the first format the browser really accepts
+  let rec = null, lastErr = null;
+  for (const type of types) {
+    try {
+      const r = new MediaRecorder(st.stream, type ? { mimeType: type } : undefined);
+      r.start();          // no time slices: the whole take arrives when recording stops (works in every browser)
+      rec = r;
+      break;
+    } catch (e) { lastErr = e; }
+  }
+  st.starting = false;
+  if (!rec) {
+    console.warn("MediaRecorder could not start", lastErr);
+    releaseMic(st);
+    st.err = "The browser did not start the recording. Please reload the page and try again, or use another browser (Chrome, Edge, Firefox or Safari).";
+    return;
+  }
   const chunks = [];
   const t0 = Date.now();
-  rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.onerror = (e) => { console.warn("MediaRecorder error", e?.error || e); };
   rec.onstop = () => {
-    const mime = rec.mimeType || type || "audio/webm";
+    releaseMic(st);
+    const mime = (chunks[0]?.type || rec.mimeType || "audio/webm").split(";")[0];
     const blob = new Blob(chunks, { type: mime });
-    const ext = /mp4/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : "webm";
+    if (!blob.size) {
+      st.err = "Nothing was recorded. Check that the right microphone is selected in the browser settings and try again.";
+      syncKey(key);
+      return;
+    }
+    const ext = /mp4|aac|m4a/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : "webm";
     const url = URL.createObjectURL(blob);
     st.takes.push({ url, dur: (Date.now() - t0) / 1000, name: `speaking-${key}-take${st.takes.length + 1}.${ext}` });
-    st.stream?.getTracks().forEach((t) => t.stop());
-    st.stream = null;
     syncKey(key);
   };
-  rec.start(1000);
   st.rec = rec;
   if (st.sec && !st.running) startTimer(key);
 }
 function stopRec(key) {
   const st = SPK.get(key);
   if (!st?.rec) return;
-  try { st.rec.stop(); } catch {}
+  const rec = st.rec;
   st.rec = null;
+  try { if (rec.state !== "inactive") { rec.requestData?.(); rec.stop(); } else releaseMic(st); }
+  catch (e) { console.warn(e); releaseMic(st); }
   if (st.running) stopTimer(st);
 }
+// leaving the page stops the microphone
+if (typeof window !== "undefined") window.addEventListener("pagehide", () => { for (const k of SPK.keys()) stopRec(k); });
 
 let actx = null;
 function beep() {
