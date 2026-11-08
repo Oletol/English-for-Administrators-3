@@ -1,11 +1,10 @@
 // Interactive parts of the book that are not marked:
-//  • speaking timers with an in-browser voice recorder (nothing is uploaded anywhere);
 //  • estimates that reveal a figure;
 //  • the small tools of Unit 1 (agreement summary, sorting board, footprint calculator,
 //    administrator profile, a hundred hectares, law and fairness chart).
 // Everything is drawn from the exercise data, so the same code works in the student book
 // and in the Teacher's Edition.
-import { registerWidgets, registerSpeaking, esc } from "./common.js?v=20261021a";
+import { registerWidgets, esc } from "./common.js?v=20261108a";
 
 const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const fmtN = (n) => Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, " ");
@@ -55,7 +54,6 @@ function refreshAll() {
     const f = REFRESH[el.dataset.w];
     if (f) try { f(el, el.closest("section.ex") || document); } catch (e) { console.warn(e); }
   });
-  $$(".spk").forEach(syncSpk);
 }
 const REFRESH = {
   estsum(el, sec) {
@@ -148,8 +146,6 @@ document.addEventListener("click", (e) => {
   if (e.target.closest?.("[data-wp]")) wpButton(e.target.closest("[data-wp]"));
   if (e.target.closest?.("[data-basin-reset]")) basinReset(e.target.closest("section.ex"));
   if (e.target.closest?.("[data-sim-reset]")) simReset(e.target.closest("section.ex"));
-  const sb = e.target.closest?.("[data-spk-act]");
-  if (sb) spkAction(sb);
 });
 // re-draw after the page has been rendered again (but not after our own drawing)
 new MutationObserver((ms) => {
@@ -345,186 +341,7 @@ function simCalc(el) {
   el.querySelector(".sim-warn").innerHTML = w.map((x) => `<p>${x}</p>`).join("");
 }
 
-// ================================================================== speaking: timer + voice recorder
-// The recording never leaves the browser: it is kept in memory as a blob, played back here and,
-// if the student wants, saved to their own computer with "Download". Reloading the page clears it.
-const SPK = new Map();   // key -> state (survives re-rendering of the page)
-const fmtT = (s) => `${String(Math.floor(Math.max(0, s) / 60)).padStart(2, "0")}:${String(Math.max(0, s) % 60).padStart(2, "0")}`;
-const RING = 2 * Math.PI * 14;
-
-function speakingHTML(t, key) {
-  const sec = Number(t.sec || 0), rec = t.record !== false;
-  return `<div class="spk" data-spk="${esc(key)}" data-sec="${sec}" data-rec="${rec ? 1 : 0}">
-    ${t.label ? `<span class="spk-lab">${esc(t.label)}</span>` : ""}
-    ${sec ? `<svg class="spk-ring" viewBox="0 0 34 34" aria-hidden="true"><circle class="bgc" cx="17" cy="17" r="14"/><circle class="fgc" cx="17" cy="17" r="14" stroke-dasharray="${RING}" stroke-dashoffset="0"/></svg>
-      <span class="spk-time">${fmtT(sec)}</span>` : ""}
-    <div class="spk-btns">
-      ${sec ? `<button class="btn small" type="button" data-spk-act="start">Start</button><button class="btn small" type="button" data-spk-act="reset">Reset</button>` : ""}
-      ${rec ? `<button class="btn small rec" type="button" data-spk-act="rec"><span class="rec-dot"></span><span class="rl">Record</span></button>` : ""}
-    </div>
-    ${rec ? `<div class="spk-takes"></div><p class="spk-note">${sec ? "Record also starts the timer. " : ""}Your recording stays in this browser: nobody else hears it, and it disappears when you reload or close the page. Use Download to keep a copy.</p>` : ""}
-  </div>`;
-}
-registerSpeaking(speakingHTML);
-
-function state(el) {
-  const key = el.dataset.spk;
-  if (!SPK.has(key)) SPK.set(key, { sec: +el.dataset.sec, left: +el.dataset.sec, running: false, timer: null, rec: null, stream: null, takes: [], err: "" });
-  return SPK.get(key);
-}
-const nodesOf = (key) => $$(`.spk[data-spk="${CSS.escape(key)}"]`);
-
-function syncSpk(el) {
-  const st = state(el);
-  el.classList.toggle("run", st.running);
-  el.classList.toggle("end", st.sec > 0 && st.left <= 0);
-  const tm = el.querySelector(".spk-time");
-  if (tm) tm.textContent = fmtT(st.left);
-  const ring = el.querySelector(".fgc");
-  if (ring) ring.setAttribute("stroke-dashoffset", String(RING * (1 - (st.sec ? st.left / st.sec : 0))));
-  const sb = el.querySelector('[data-spk-act="start"]');
-  if (sb) sb.textContent = st.running ? "Pause" : st.left < st.sec && st.left > 0 ? "Continue" : "Start";
-  const rb = el.querySelector('[data-spk-act="rec"]');
-  if (rb) {
-    rb.classList.toggle("on", !!st.rec);
-    rb.disabled = !!st.starting;
-    rb.querySelector(".rl").textContent = st.starting ? "Starting the microphone…" : st.rec ? "Stop recording" : "Record";
-  }
-  const box = el.querySelector(".spk-takes");
-  if (box) {
-    const sig = st.takes.map((t) => t.url).join("|") + st.err;
-    if (box.dataset.sig !== sig) {
-      box.dataset.sig = sig;
-      box.innerHTML = (st.err ? `<div class="spk-take" style="color:var(--bad)">${esc(st.err)}</div>` : "")
-        + st.takes.map((t, i) => `<div class="spk-take"><span class="tk-n">Take ${i + 1}</span><audio controls src="${t.url}"></audio>
-          <span class="muted" style="font-size:12px">${fmtT(Math.round(t.dur))}</span>
-          <a href="${t.url}" download="${esc(t.name)}">Download</a></div>`).join("");
-    }
-  }
-}
-const syncKey = (key) => nodesOf(key).forEach(syncSpk);
-
-function tick(key) {
-  const st = SPK.get(key);
-  st.left -= 1;
-  if (st.left <= 0) {
-    st.left = 0; stopTimer(st); beep();
-    if (st.rec) stopRec(key);
-  }
-  syncKey(key);
-}
-function startTimer(key) {
-  const st = SPK.get(key);
-  if (!st.sec || st.running) return;
-  if (st.left <= 0) st.left = st.sec;
-  st.running = true;
-  st.timer = setInterval(() => tick(key), 1000);
-}
-function stopTimer(st) { st.running = false; clearInterval(st.timer); st.timer = null; }
-
-async function spkAction(b) {
-  const el = b.closest(".spk"), key = el.dataset.spk, st = state(el), act = b.dataset.spkAct;
-  if (act === "start") { st.running ? stopTimer(st) : startTimer(key); }
-  if (act === "reset") { stopTimer(st); st.left = st.sec; if (st.rec) stopRec(key); }
-  if (act === "rec") { st.rec ? stopRec(key) : await startRec(key); }
-  syncKey(key);
-}
-
-// Formats to try, best first. Safari records natively in MP4 (AAC) and some versions claim WebM support
-// but then refuse to start, so Safari tries MP4 first. If a format fails, the next one is tried,
-// and in the end the browser's own default.
-function typeCandidates() {
-  if (typeof MediaRecorder === "undefined") return null;
-  const ua = navigator.userAgent || "";
-  const safari = /Safari\//.test(ua) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|OPR\/|YaBrowser\//.test(ua);
-  const list = safari
-    ? ["audio/mp4", "audio/mp4;codecs=mp4a.40.2", "audio/webm;codecs=opus", "audio/webm"]
-    : ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"];
-  const ok = list.filter((t) => { try { return MediaRecorder.isTypeSupported?.(t); } catch { return false; } });
-  return [...ok, ""];
-}
-function releaseMic(st) {
-  st.stream?.getTracks().forEach((t) => { try { t.stop(); } catch {} });
-  st.stream = null;
-}
-async function startRec(key) {
-  const st = SPK.get(key);
-  if (st.rec || st.starting) return;            // a second click while the browser is still asking for the microphone
-  st.err = "";
-  const types = typeCandidates();
-  if (types === null || !navigator.mediaDevices?.getUserMedia) { st.err = "This browser cannot record sound. Please try Chrome, Edge, Firefox or Safari."; return; }
-  st.starting = true;
-  syncKey(key);
-  try {
-    st.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-  } catch (e) {
-    st.starting = false;
-    st.err = e?.name === "NotFoundError"
-      ? "No microphone was found. Connect a microphone or headset and try again."
-      : "The microphone is not available. Allow access to the microphone in the browser (the icon in the address bar) and try again.";
-    return;
-  }
-  // start a recorder in the first format the browser really accepts
-  let rec = null, lastErr = null;
-  for (const type of types) {
-    try {
-      const r = new MediaRecorder(st.stream, type ? { mimeType: type } : undefined);
-      r.start();          // no time slices: the whole take arrives when recording stops (works in every browser)
-      rec = r;
-      break;
-    } catch (e) { lastErr = e; }
-  }
-  st.starting = false;
-  if (!rec) {
-    console.warn("MediaRecorder could not start", lastErr);
-    releaseMic(st);
-    st.err = "The browser did not start the recording. Please reload the page and try again, or use another browser (Chrome, Edge, Firefox or Safari).";
-    return;
-  }
-  const chunks = [];
-  const t0 = Date.now();
-  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
-  rec.onerror = (e) => { console.warn("MediaRecorder error", e?.error || e); };
-  rec.onstop = () => {
-    releaseMic(st);
-    const mime = (chunks[0]?.type || rec.mimeType || "audio/webm").split(";")[0];
-    const blob = new Blob(chunks, { type: mime });
-    if (!blob.size) {
-      st.err = "Nothing was recorded. Check that the right microphone is selected in the browser settings and try again.";
-      syncKey(key);
-      return;
-    }
-    const ext = /mp4|aac|m4a/.test(mime) ? "m4a" : /ogg/.test(mime) ? "ogg" : "webm";
-    const url = URL.createObjectURL(blob);
-    st.takes.push({ url, dur: (Date.now() - t0) / 1000, name: `speaking-${key}-take${st.takes.length + 1}.${ext}` });
-    syncKey(key);
-  };
-  st.rec = rec;
-  if (st.sec && !st.running) startTimer(key);
-}
-function stopRec(key) {
-  const st = SPK.get(key);
-  if (!st?.rec) return;
-  const rec = st.rec;
-  st.rec = null;
-  try { if (rec.state !== "inactive") { rec.requestData?.(); rec.stop(); } else releaseMic(st); }
-  catch (e) { console.warn(e); releaseMic(st); }
-  if (st.running) stopTimer(st);
-}
-// leaving the page stops the microphone
-if (typeof window !== "undefined") window.addEventListener("pagehide", () => { for (const k of SPK.keys()) stopRec(k); });
-
-let actx = null;
-function beep() {
-  try {
-    actx ??= new (window.AudioContext || window.webkitAudioContext)();
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.frequency.value = 880; g.gain.value = 0.08;
-    o.connect(g); g.connect(actx.destination);
-    o.start(); o.stop(actx.currentTime + 0.35);
-  } catch {}
-}
-
+// (speaking timers and the voice recorder are in speaking.js)
 
 // ------------------------------------------------------------------ water on your plate (Unit 2)
 // [food, one portion, kg (or litres) per portion, litres of water per kg, default portions a week]

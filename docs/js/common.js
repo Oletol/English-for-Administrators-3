@@ -1,5 +1,6 @@
 // Общие функции: отрисовка упражнений, автопроверка, подсчёт баллов.
 // Используются и студенческой, и преподавательской страницей.
+import { metricsLine } from "./transcribe.js?v=20261108a";
 
 export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -8,12 +9,13 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
 // регистр, апострофы, пробелы, знаки препинания и сокращения (don't = do not) не важны
 const CONTR = [[/\bcan't\b|\bcan not\b/g, "cannot"], [/\bwon't\b/g, "will not"], [/\bshan't\b/g, "shall not"],
   [/n't\b/g, " not"], [/'m\b/g, " am"], [/'re\b/g, " are"], [/'ve\b/g, " have"], [/'ll\b/g, " will"]];
-export function norm(s) {
+// punct = true: commas, colons, semicolons and question/exclamation marks count (punctuation exercises)
+export function norm(s, punct = false) {
   let t = String(s ?? "")
     .toLowerCase()
     .replace(/[’‘`´]/g, "'")
     .replace(/[“”"«»]/g, " ")
-    .replace(/[,!?;:]/g, " ")
+    .replace(punct ? /\s*([,!?;:])\s*/g : /[,!?;:]/g, punct ? "$1 " : " ")
     .replace(/\.+(\s|$)/g, " ");
   for (const [re, to] of CONTR) t = t.replace(re, to);
   return t.replace(/\s+/g, " ").trim();
@@ -51,7 +53,7 @@ export function expandKey(k) {
 export const KIND_LABEL = { gap: "Gap fill", match: "Matching", mcq: "Multiple choice", open: "Open answer", estimate: "Estimate", rate: "Rating" };
 // an item is scored only if it has the exercise's own kind and is not marked "graded": false
 export const scoredItems = (ex) => (ex.items || []).filter((it) => (!it.kind || it.kind === ex.kind) && it.graded !== false);
-// auto-checked: has keys (not "open", not marked "graded": false)
+// auto-checked: has keys (not "open", "estimate" or "rate", not marked "graded": false)
 export const isAuto = (ex) => !!ex.kind && !["open", "estimate", "rate"].includes(ex.kind) && ex.graded !== false;
 // marked by the teacher by hand
 export const isManual = (ex) => ex.kind === "open" && ex.graded !== false;
@@ -85,12 +87,16 @@ export const firstKey = (key) => expandKey(Array.isArray(key) ? key[0] ?? "" : k
 const loosen = (t) => t.replace(/\b(a|an|the)\b/g, " ").replace(/^\s*(to\s+)?(be\s+)?/, "").replace(/\s+/g, " ").trim();
 export function isCorrect(given, key, opts = {}) {
   if (given == null || norm(given) === "") return false;
+  const P = !!opts.punct;
   const variants = (Array.isArray(key) ? key : [key]).flatMap(expandKey);
-  // "'d" can mean "had" or "would": try both
-  let gs = [norm(given)];
-  for (let i = 0; i < 3 && gs.some((x) => /'d\b/.test(x)); i++)
-    gs = gs.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
-  const keysN = new Set(variants.map(norm));
+  // "'d" can mean "had" or "would": try both, in the answer and in the key
+  const expandD = (list) => {
+    for (let i = 0; i < 3 && list.some((x) => /'d\b/.test(x)); i++)
+      list = list.flatMap((x) => (/'d\b/.test(x) ? [x.replace(/'d\b/, " had"), x.replace(/'d\b/, " would")] : [x])).map((x) => x.replace(/\s+/g, " "));
+    return list;
+  };
+  const gs = expandD([norm(given, P)]);
+  const keysN = new Set(expandD(variants.map((v) => norm(v, P))));
   if (opts.lenient) {
     const keysL = new Set([...keysN].map(loosen));
     return gs.some((x) => keysN.has(x) || keysL.has(loosen(x)));
@@ -98,92 +104,106 @@ export function isCorrect(given, key, opts = {}) {
   return gs.some((x) => keysN.has(x));
 }
 
-// ------------------------------------------------------------------ lesson plan, "Done", attendance
-// (the same storage as in English for Administrators_1; none of it needs a change to the database rules)
-// group.plan[unitId][exId] = {as: "class" | "home", done: true, date: "2026-10-21"}   In-Class / HA and the teacher's tick
-// answerKeys/journal~<groupId> = {groupId, lessons: {"2026-10-21": {absent: [uid]}}}   attendance, teacher only
-// answers._done[exId] = "1"                                                           the student clicked "Done"
-export const DONE = "_done";
-export const doneMap = (answers) => (answers && typeof answers[DONE] === "object" && answers[DONE]) || {};
-export const ABSENT_FACTOR = 0.25;
-export const PLAN_LABEL = { class: "In-Class", home: "HA" };
-export const round2 = (x) => Math.round(Number(x || 0) * 100) / 100;
-export const fmtDate = (iso) => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || ""); };
-export const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
-// the tag in the exercise header: "In-Class" / "HA", with a tick when the teacher has marked it as done
-export function planTag(p) {
-  if (!p?.as) return null;
-  return { text: `${p.done ? "✓ " : ""}${PLAN_LABEL[p.as] || ""}`, cls: p.as === "home" ? "home" : "class",
-    title: `${p.as === "home" ? "Home assignment" : "Classwork"}${p.done && p.date ? " · done " + fmtDate(p.date) : ""}` };
-}
-// the exercise has something to answer, so the student marks it as done
-export const hasItems = (ex) => (ex.items || []).length > 0;
-// exercises left out of the class statistics: translations (checked by the teacher) and "stats": false
-export const noStats = (ex) => ex.stats === false || (ex.stats !== true && /translat|equivalent|from russian/i.test(`${ex.title || ""} ${String(ex.rubric || "").replace(/<[^>]*>/g, "")}`));
-
 // Автопроверка: answers = {exId:{itemId:value}}, keys = {exId:{itemId:answer}}
-// factors = {exId: 0.25}: each point of that exercise counts as 0.25 (missed classwork)
-export function gradeAuto(content, answers, keys, factors = {}) {
+export function gradeAuto(content, answers, keys) {
   const items = {};
   let score = 0, max = 0;
   for (const ex of exercisesOf(content)) {
     if (!isAuto(ex)) continue;
     items[ex.id] = {};
-    const f = factors[ex.id] ?? 1;
     for (const it of scoredItems(ex)) {
       const given = answers?.[ex.id]?.[it.id] ?? "";
       const key = keys?.[ex.id]?.[it.id];
-      const ok = isCorrect(given, key, { lenient: ex.lenient });
+      const ok = isCorrect(given, key, { punct: ex.punct, lenient: ex.lenient });
       items[ex.id][it.id] = { given, ok, correct: firstKey(key) };
       max += 1;
-      if (ok) score += f;
+      if (ok) score += 1;
     }
   }
-  return { items, score: round2(score), max };
+  return { items, score, max };
 }
 
 // Check one exercise (used when the teacher checks a single exercise)
-export function gradeExercise(ex, answers, keys, factor = 1) {
+export function gradeExercise(ex, answers, keys) {
   const items = {};
   let score = 0;
   const list = scoredItems(ex);
   for (const it of list) {
     const given = answers?.[it.id] ?? "";
     const key = keys?.[it.id];
-    const ok = isCorrect(given, key, { lenient: ex.lenient });
+    const ok = isCorrect(given, key, { punct: ex.punct, lenient: ex.lenient });
     items[it.id] = { given, ok, correct: firstKey(key) };
-    if (ok) score += factor;
+    if (ok) score += 1;
   }
-  return { items, score: round2(score), max: list.length };
+  return { items, score, max: list.length };
 }
 
 // Итоговый документ results/{unitId__uid}
-// factors: classwork the student missed (absent on the day it was done in class) counts at 25%
+// factors = {exId: 0.25}: the student was absent from the lesson where this in-class exercise was done,
+// so the exercise brings only 25% of its points.
+export const r2 = (x) => Math.round(x * 100) / 100;
 export function buildResult({ sub, content, keys, manual = {}, showCorrect = true, factors = {} }) {
-  const auto = gradeAuto(content, sub.answers, keys, factors);
+  const auto = gradeAuto(content, sub.answers, keys);
   if (!showCorrect)
     for (const ex of Object.values(auto.items)) for (const r of Object.values(ex)) delete r.correct;
+  let aScore = 0;
+  for (const [exId, items] of Object.entries(auto.items))
+    aScore += Object.values(items).filter((r) => r.ok).length * (factors[exId] ?? 1);
   let mScore = 0, mMax = 0, pending = 0;
   for (const ex of exercisesOf(content)) {
     if (!isManual(ex)) continue;
-    for (const it of scoredItems(ex)) {
+    for (const it of scoredItems(ex).filter((x) => !x.plain)) {   // "plain": an extra line (a partner's name) that gets no points
       mMax += itemMax(ex, it);
       const g = manual?.[ex.id]?.[it.id];
       if (g && g.score !== null && g.score !== "" && g.score !== undefined) mScore += Number(g.score) * (factors[ex.id] ?? 1);
       else pending += 1;
     }
   }
-  const used = Object.fromEntries(Object.entries(factors).filter(([id, f]) => f !== 1 && exercisesOf(content).some((e) => e.id === id)));
+  aScore = r2(aScore); mScore = r2(mScore);
   return {
     uid: sub.uid, groupId: sub.groupId, unitId: sub.unitId,
     auto: auto.items, manual,
-    autoScore: auto.score, autoMax: auto.max,
-    manualScore: round2(mScore), manualMax: mMax, manualPending: pending,
-    score: round2(auto.score + mScore), max: auto.max + mMax,
-    factors: used,
+    autoScore: aScore, autoMax: auto.max,
+    manualScore: mScore, manualMax: mMax, manualPending: pending,
+    score: r2(aScore + mScore), max: auto.max + mMax,
+    factors: Object.fromEntries(Object.entries(factors).filter(([, f]) => f !== 1)),
     showCorrect,
   };
 }
+
+// ------------------------------------------------------------------ exercises marked "Done" by the student
+// Stored inside the answers map under a key that is never an exercise id: answers._done = {exId: "1"}.
+// (This needs no change to the database rules: answers is already a free map.)
+export const DONE = "_done";
+export const doneMap = (answers) => (answers && typeof answers[DONE] === "object" && answers[DONE]) || {};
+
+// translation exercises are left out of the live statistics
+export const isTranslation = (ex) => ex.stats === false || /translat/i.test(`${ex.title || ""} ${ex.rubric || ""}`.replace(/<[^>]*>/g, ""));
+
+// numbers of the exercises as the book shows them: {exId: "1.4.2"}
+export function exerciseNumbers(content, unitN) {
+  const out = {};
+  (content?.sections || []).forEach((s, i) => {
+    let n = 0, sub = 0;
+    for (const b of s.blocks || []) {
+      if (b.type === "exercise") { if (b.sub) sub += 1; else { n += 1; sub = 0; } out[b.id] = `${unitN}.${i + 1}.${n}${subL(sub)}`; }
+      else if (b.type === "flashcards" && b.numbered) n += 1;
+    }
+  });
+  return out;
+}
+
+// In-Class / HA labels and the teacher's "done" ticks: groups/{gid}.plan[unitId][exId] = {as, done, date}
+export const PLAN_LABEL = { class: "In-Class", home: "HA" };
+export function planTag(p) {
+  if (!p?.as) return "";
+  return `<span class="ex-plan ${p.as === "home" ? "home" : "class"}${p.done ? " done" : ""}" title="${p.as === "home" ? "Home assignment" : "Done in class"}${p.done && p.date ? " · " + esc(fmtDate(p.date)) : ""}">${p.done ? "✓ " : ""}${PLAN_LABEL[p.as] || ""}</span>`;
+}
+export const fmtDate = (iso) => { const m = String(iso || "").match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}.${m[2]}.${m[1]}` : String(iso || ""); };
+export const todayISO = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+// the answer as a person reads it: for matching, the letter with the text of the option
+export function answerLabel(ex, v) { return showAns(ex, v); }
 
 // ---------------------------------------------------------------------
 //  Отрисовка
@@ -196,8 +216,10 @@ export function buildResult({ sub, content, keys, manual = {}, showCorrect = tru
 //    grading: bool              — поля для выставления оценки (преподаватель)
 //  }
 // ---------------------------------------------------------------------
+// "sub": true – an exercise that belongs to the one before it (e.g. the text of a recording): 1.1.14a, 1.1.14b…
+export const subL = (k) => (k ? "abcdefghij"[k - 1] || String(k) : "");
 export function renderBlocks(blocks, exOpts, numPrefix = "") {
-  let n = 0;
+  let n = 0, sub = 0;
   return (blocks || []).map((b) => {
     if (b.type === "html") return `<div class="block-html">${b.html}</div>`;
     if (b.type === "teacher-note") return `<div class="tnote"><div class="tn-h"><span class="tn-ic">T</span>Teaching notes</div><div class="tn-b">${b.html}</div></div>`;
@@ -207,7 +229,10 @@ export function renderBlocks(blocks, exOpts, numPrefix = "") {
     if (b.type === "audio") return renderAudio(b);
     if (b.type === "video") return renderVideo(b);
     if (b.type === "speaking") return `<div class="block-spk">${speakingHTML(b, "blk-" + (b.id || hashStr(JSON.stringify(b))))}</div>`;
-    if (b.type === "exercise") { n += 1; return renderExercise(b, { num: numPrefix ? `${numPrefix}.${n}` : String(n), ...exOpts(b) }); }
+    if (b.type === "exercise") {
+      if (b.sub) sub += 1; else { n += 1; sub = 0; }
+      return renderExercise(b, { num: (numPrefix ? `${numPrefix}.${n}` : String(n)) + subL(sub), ...exOpts(b) });
+    }
     return "";
   }).join("\n");
 }
@@ -218,13 +243,20 @@ export function renderExercise(ex, o = {}) {
   let scoreLine = "";
   if (o.auto && isAuto(ex)) {
     const vals = Object.values(o.auto);
-    scoreLine = `<span class="ex-score">${vals.filter((v) => v.ok).length} / ${vals.length}</span>`;
+    const ok = vals.filter((v) => v.ok).length;
+    scoreLine = o.factor && o.factor !== 1
+      ? `<span class="ex-score low" title="You were absent from the lesson where this exercise was done in class: it brings ${Math.round(o.factor * 100)}% of the points.">${ok} / ${vals.length} · ${Math.round(o.factor * 100)}% = ${r2(ok * o.factor)}</span>`
+      : `<span class="ex-score">${ok} / ${vals.length}</span>`;
+  } else if (o.factor && o.factor !== 1) {
+    scoreLine = `<span class="ex-score low" title="You were absent from the lesson where this exercise was done in class.">${Math.round(o.factor * 100)}% of the points</span>`;
   }
+  const stat = (id) => (o.itemStat ? o.itemStat(id) : "");
   const options = ex.kind === "match" && ex.showOptionList !== false
     ? `<div class="opt-list">${ex.optionLabel ? `<span class="bank-l">${esc(ex.optionLabel)}</span>` : ""}${(ex.options || []).map((op) => `<b>${esc(op.id)}</b>&nbsp;${op.text}`).join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
   const bank = ex.bank ? `<div class="opt-list"><span class="bank-l">${esc(ex.bankLabel || "Word bank")}</span>${ex.bank.map((w) => esc(w)).join(" &nbsp;&middot;&nbsp; ")}</div>` : "";
   const teacher = isTeacherPage();
 
+  const inlineCtl = {};
   const itemHTML = (it) => {
     const kind = it.kind || ex.kind;
     const val = a[it.id] ?? "";
@@ -232,8 +264,7 @@ export function renderExercise(ex, o = {}) {
     const mark = r ? (r.ok ? "ok" : "bad") : "";
     const attrs = `data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis}`;
     const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(showAns(ex, r.correct))}</span>` : "";
-    const keyHint = (o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "")
-      + (o.itemStat ? o.itemStat(it.id) : "");
+    const keyHint = o.key && o.key[it.id] !== undefined && kind !== "open" ? `<span class="keyhint">✓ ${esc(showAns(ex, keyText(o.key[it.id])))}</span>` : "";
     let body = "";
     const play = it.audio ? itemPlayButton(it.audio, ex.once) : "";
     // "because …": an extra line that is saved but not marked (odd one out with a reason)
@@ -241,13 +272,17 @@ export function renderExercise(ex, o = {}) {
 
     if (kind === "gap") {
       const size = it.size || ex.size || 14;
-      const input = `<input class="gap ${ex.box ? "box" : ""} ${mark}" ${attrs} value="${esc(val)}" size="${size}" ${ex.box ? `style="width:${size + 1}ch"` : ""} ${NOAUTO}>`;
-      body = it.text.includes("___") ? it.text.replace("___", input) : `<span class="li-t">${it.text}</span>${input}`;
-      body += corr + keyHint;
+      // "choices": the word is chosen from a dropdown list instead of being typed
+      const input = it.choices
+        ? `<select class="gap ${mark}" ${attrs}><option value="">choose…</option>${it.choices.map((c) => `<option value="${esc(c)}" ${val === c ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+        : `<input class="gap ${ex.box ? "box" : ""} ${mark}" ${attrs} value="${esc(val)}" size="${size}" ${ex.box ? `style="width:${size + 1}ch"` : ""} ${NOAUTO}>`;
+      if (ex.inline) { inlineCtl[it.id] = `${ex.inlineNums === false ? "" : `<span class="gn">${esc(it.id)}</span>`}${input}${corr}${keyHint}${stat(it.id)}`; return ""; }
+      body = (it.text || "").includes("___") ? it.text.replace("___", input) : `<span class="li-t">${it.text || ""}</span>${input}`;
+      body += corr + keyHint + stat(it.id);
     } else if (kind === "match") {
       const opts = (it.options ? it.options.map((t, i) => ({ id: "ABCDEFGHIJ"[i], text: t })) : ex.options || []).map((op) =>
         `<option value="${esc(op.id)}" ${val === op.id ? "selected" : ""}>${ex.plain || it.options ? "" : esc(op.id) + ". "}${esc(stripTags(op.text))}</option>`).join("");
-      body = `<span class="m-word">${it.text}</span> <select class="gap ${mark}" ${attrs}><option value="">choose…</option>${opts}</select>${corr}${keyHint}`;
+      body = `<span class="m-word">${it.text}</span> <select class="gap ${mark}" ${attrs}><option value="">choose…</option>${opts}</select>${corr}${keyHint}${stat(it.id)}`;
     } else if (kind === "mcq") {
       const name = `${ex.id}__${it.id}`;
       const letters = "ABCDEFGH";
@@ -256,7 +291,7 @@ export function renderExercise(ex, o = {}) {
         const cls = r && val === L ? (r.ok ? "ok" : "bad") : (o.key && o.key[it.id] === L ? "right" : "");
         return `<label class="${cls}"><input type="radio" name="${esc(name)}" value="${L}" ${val === L ? "checked" : ""} ${attrs}><span class="l">${L.toLowerCase()}</span><span>${t}</span></label>`;
       }).join("");
-      body = `${it.text}<div class="mcq ${ex.columns === 2 ? "cols2" : ""} ${ex.scale ? "scale" : ""}">${opts}</div>${corr}${o.itemStat ? o.itemStat(it.id) : ""}`;
+      body = `${it.text}${stat(it.id)}<div class="mcq ${ex.columns === 2 ? "cols2" : ""} ${ex.scale ? "scale" : ""}">${opts}</div>${corr}`;
     } else if (kind === "estimate") {
       // a slider (or a short list) and a "Reveal" button; the figure is part of the book, not a key
       const shown = a[it.id + "_shown"] === "1" || teacher;
@@ -284,8 +319,8 @@ export function renderExercise(ex, o = {}) {
     } else if (kind === "open") {
       const m = o.manual?.[it.id];
       const max = itemMax(ex, it);
+      const scored = kind === ex.kind && ex.graded !== false && it.graded !== false && !it.plain;
       let grade = "";
-      const scored = kind === ex.kind && ex.graded !== false && it.graded !== false;
       if (o.grading && scored) {
         grade = `<div class="grade-box">
           <label>Score <input type="number" min="0" max="${max}" step="0.5" class="g-score" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" value="${esc(m?.score ?? "")}"> / ${max}</label>
@@ -298,7 +333,22 @@ export function renderExercise(ex, o = {}) {
       }
       const minW = it.minWords || (kind === ex.kind ? ex.minWords : 0);
       const wc = minW ? `<div class="wc"><span class="wc-n" data-wc="${esc(ex.id)}:${esc(it.id)}">${countWords(val)}</span> words <span class="muted">· at least ${minW}</span></div>` : "";
-      body = `${it.text}<textarea class="open-answer" rows="${it.rows || ex.rows || 5}" ${attrs} ${NOAUTO} placeholder="${o.readOnly ? "" : "Type your answer here…"}">${esc(val)}</textarea>${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
+      const model = o.key && o.key[it.id] ? `<div class="keyhint model"><b>Model answer:</b> ${esc(keyText(o.key[it.id]))}</div>` : "";
+      // "transcript": the text is written by the speech recogniser (speaking block with "transcribe"), not typed
+      const tr = ex.transcript && it === ex.items[0];
+      let spLine = "";
+      if (tr) { try { spLine = o.speech ? metricsLine(JSON.parse(o.speech)) : ""; } catch {} }
+      const extra = tr ? `<input type="hidden" data-ex="_speech" data-item="${esc(ex.id)}" value="${esc(o.speech || "")}" ${dis}><div class="sp-line" data-sp-line="${esc(ex.id)}">${esc(spLine)}</div>` : "";
+      const ph = o.readOnly ? "" : tr ? "Record your answer above and click Transcribe: the text will appear here." : "Type your answer here…";
+      // the partner in a pair discussion: chosen from the students of the group (the value is the student's id)
+      if (ex.pair && it.plain && Array.isArray(o.roster)) {
+        const known = o.roster.some((p) => p.uid === val);
+        const optsP = o.roster.map((p) => `<option value="${esc(p.uid)}" ${p.uid === val ? "selected" : ""}>${esc(p.name)}</option>`).join("");
+        body = `${it.text}<select class="gap partner-sel" ${attrs}><option value="">choose your partner…</option>${optsP}`
+          + `${val && !known ? `<option value="${esc(val)}" selected>${esc(val)}</option>` : ""}</select>${o.itemExtra ? o.itemExtra(it.id) : ""}`;
+        return `<li>${body}</li>`;
+      }
+      body = `${it.text}${model}<textarea class="open-answer ${tr ? "transcript" : ""}" rows="${it.rows || ex.rows || 5}" ${attrs} ${tr ? "readonly" : ""} ${NOAUTO} placeholder="${ph}">${esc(val)}</textarea>${extra}${wc}${o.itemExtra ? o.itemExtra(it.id) : ""}${grade}`;
     }
     body += reason;
     return `<li${play ? ' class="has-play"' : ""}${it.n ? ` value="${esc(it.n)}"` : ""}>${play}${play ? `<div class="li-body">${body}</div>` : body}</li>`;
@@ -312,6 +362,8 @@ export function renderExercise(ex, o = {}) {
   const olClass = `items ${ex.layout === "two" ? "two" : ""} ${ex.wide ? "wide" : ""} ${ex.quotes ? "quotes" : ""} ${ex.kind === "rate" ? "labelled" : ""}`;
   let body = `<ol class="${olClass}" ${ex.start ? `start="${esc(ex.start)}"` : ""}>${items}</ol>`;
   const tailHTML = tail.length ? `<ol class="items" start="${main.length + 1}">${tail.map(itemHTML).join("")}</ol>` : "";
+  // "inline": a whole text (html) with {{itemId}} where each gap goes
+  if (ex.inline) body = `<div class="inline-text">${ex.inline.replace(/\{\{([\w-]+)\}\}/g, (m, id) => inlineCtl[id] ?? m)}</div>`;
   if (ex.kind === "match" && ex.display === "letters") {
     // as in the printed workbook: type the letter next to each phrase, meanings listed on the right
     const left = (ex.items || []).map((it) => {
@@ -320,27 +372,25 @@ export function renderExercise(ex, o = {}) {
       const r = o.auto?.[it.id];
       const mark = r ? (r.ok ? "ok" : "bad") : "";
       const corr = r && !r.ok && r.correct ? `<span class="corr">Correct: ${esc(r.correct)}</span>` : "";
-      const keyHint = (o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "")
-        + (o.itemStat ? o.itemStat(it.id) : "");
-      return `<li><span class="m-word">${it.text}</span> <input class="gap ${mark}" style="width:5ch" maxlength="2" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis} value="${esc(val)}" ${NOAUTO}>${corr}${keyHint}</li>`;
+      const keyHint = o.key && o.key[it.id] !== undefined ? `<span class="keyhint">✓ ${esc(keyText(o.key[it.id]))}</span>` : "";
+      return `<li><span class="m-word">${it.text}</span> <input class="gap ${mark}" style="width:5ch" maxlength="2" data-ex="${esc(ex.id)}" data-item="${esc(it.id)}" ${dis} value="${esc(val)}" ${NOAUTO}>${corr}${keyHint}${stat(it.id)}</li>`;
     }).join("");
     const right = (ex.options || []).map((op) => `<li>${op.text}</li>`).join("");
     const rest = (ex.items || []).filter((it) => it.kind && it.kind !== "match");
     body = `<div class="match"><ol class="m-left">${left}</ol><ol class="m-right" type="a">${right}</ol></div>`
       + (rest.length ? `<ol class="items" start="${(ex.items || []).length - rest.length + 1}">${rest.map(itemHTML).join("")}</ol>` : "");
   }
-  const tag = (o.label ? `<span class="ex-lab ${esc(o.label.cls || "")}" title="${esc(o.label.title || "")}">${esc(o.label.text)}</span>` : "")
-    + (o.tag ? `<span class="ex-tag">${o.tag}</span>` : "");
+  const tag = o.tag ? `<span class="ex-tag">${o.tag}</span>` : "";
   const wTop = ex.widget && widgetPlace(ex) === "before" ? widgetHTML(ex) : "";
   const wEnd = ex.widget && widgetPlace(ex) === "after" ? widgetHTML(ex) : "";
   const timers = (ex.timers || []).map((t, i) => speakingHTML(t, `${ex.id}-${i}`)).join("");
-  return `${o.before || ""}<section class="ex" id="ex-${esc(ex.id)}" data-exid="${esc(ex.id)}">
-  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span>${tag}${scoreLine}</div>
-  ${o.top || ""}
+  return `${o.before || ""}<section class="ex ${o.cls || ""}" id="ex-${esc(ex.id)}" data-exid="${esc(ex.id)}">
+  <div class="ex-h">${o.num ? `<span class="ex-n">${esc(o.num)}</span>` : ""}<span class="ex-t">${esc(ex.title || "")}</span>${o.headExtra || ""}${tag}${scoreLine}</div>
   ${ex.rubric ? `<p class="ex-i">${ex.rubric}</p>` : ""}
   ${ex.display === "letters" ? "" : options}${bank}
   ${ex.html ? `<div class="wg">${ex.html}</div>` : ""}
-  ${wTop}${body}${ex.htmlAfter ? `<div class="wg">${ex.htmlAfter}</div>` : ""}${wEnd}${tailHTML}${timers}${o.footer || ""}
+  ${wTop}${body}${ex.htmlAfter ? `<div class="wg">${ex.htmlAfter}</div>` : ""}${wEnd}${tailHTML}${timers}
+  ${o.after || ""}
 </section>`;
 }
 
@@ -349,10 +399,6 @@ let widgetImpl = { html: () => "", place: () => "after" };
 export function registerWidgets(impl) { widgetImpl = impl; }
 const widgetHTML = (ex) => widgetImpl.html(ex);
 const widgetPlace = (ex) => ex.widgetPos || widgetImpl.place(ex);
-let speakingImpl = () => "";
-export function registerSpeaking(fn) { speakingImpl = fn; }
-const speakingHTML = (t, key) => speakingImpl(t, key);
-export function hashStr(s) { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
 
 // Для matching показываем не только букву, но и текст варианта
 function showAns(ex, v) {
@@ -459,7 +505,7 @@ export function renderFlashcards(b, num = "") {
   const data = esc(JSON.stringify(cards));
   const style = b.style === "discussion" ? "discussion" : "words";
   return `<section class="fc ${style === "discussion" ? "fc-disc" : ""}" data-cards="${data}" data-i="0" data-style="${style}">
-    <div class="fc-h">${num ? `<span class="ex-n">${esc(num)}</span>` : `<span class="ic">🃏</span>`}<span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
+    <div class="fc-h">${num ? `<span class="ex-n">${esc(num)}</span>` : `<span class="ic"></span>`}<span class="ex-t">${esc(b.title || "Flashcards")}</span></div>
     ${b.rubric ? `<p class="ex-i">${b.rubric}</p>` : ""}
     <div class="fc-stage">${fcCard(cards[0], 0, cards.length, style)}</div>
     <div class="fc-nav">
@@ -478,8 +524,8 @@ function fcCard(c, i, n, style) {
     <span class="fc-face fc-front"><span class="lbl">Card ${i + 1}</span><span class="q">${esc(c.front)}</span></span></div>`;
   return `<button type="button" class="fc-card" data-fc="flip" aria-label="Turn the card over">
     <span class="fc-inner">
-      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span>${c.pos ? `<span class="pos">${esc(c.pos)}</span>` : ""}<span class="hint">Click to turn the card over</span></span>
-      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span><span class="tr">${esc(c.back)}</span>${c.def ? `<span class="def">${esc(c.def)}</span>` : ""}${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
+      <span class="fc-face fc-front"><span class="w">${esc(c.front)}</span>${c.ipa ? `<span class="ipa">${esc(c.ipa)}</span>` : ""}${c.pos ? `<span class="pos">${esc(c.pos)}</span>` : ""}<span class="hint">Click to turn the card over</span></span>
+      <span class="fc-face fc-back"><span class="w2">${esc(c.front)}</span>${c.ipa ? `<span class="ipa">${esc(c.ipa)}</span>` : ""}<span class="tr">${esc(c.back)}</span>${c.def ? `<span class="def">${esc(c.def)}</span>` : ""}${c.example ? `<span class="eg">${esc(c.example)}</span>` : ""}</span>
     </span></button>`;
 }
 let fcWired = false;
@@ -523,17 +569,24 @@ export function wireFlashcards(root = document) {
 // ---------------------------------------------------------------------
 const mediaSrc = (src) => esc(String(src || "").replace(/^\/+/, ""));
 function renderImages(items, layout) {
-  const figs = items.map((it) => `<figure class="pic">
-      <img src="${mediaSrc(it.src)}" alt="${esc(it.alt || it.caption || "")}" loading="lazy" draggable="false">
+  const figs = items.map((it) => `<figure class="pic" data-file="${esc(String(it.src || "").split("/").pop())}">
+      <img src="${mediaSrc(it.src)}" alt="${esc(it.alt || it.caption || "")}" loading="lazy" draggable="false" onerror="this.parentNode.classList.add('missing')">
       ${it.caption || it.label ? `<figcaption class="cap">${it.label ? `<b>${esc(it.label)}</b>` : ""}${it.caption ? esc(it.caption) : ""}</figcaption>` : ""}
     </figure>`).join("");
   return `<div class="pics ${items.length > 1 ? (layout === "row" ? "row" : "grid") : "one"}">${figs}</div>`;
 }
+// speaking timers with a voice recorder: drawn by speaking.js (registered there)
+let speakingImpl = () => "";
+export function registerSpeaking(fn) { speakingImpl = fn; }
+const speakingHTML = (t, key) => speakingImpl(t, key);
+export function hashStr(s) { let h = 0; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) | 0; return (h >>> 0).toString(36); }
+
+// video from Rutube or YouTube: b.url = the page of the film (embed address worked out from it), or b.src / b.embed = the embed address
 function renderVideo(b) {
   const m = String(b.url || "").match(/rutube\.ru\/video\/(private\/)?([0-9a-f]{32})/);
   const q = String(b.url || "").match(/[?&]p=([^&]+)/);
   const yt = String(b.url || "").match(/(?:v=|youtu\.be\/|\/embed\/)([A-Za-z0-9_-]{6,})/);
-  const embed = b.embed || (m ? `https://rutube.ru/play/embed/${m[2]}${q ? "?p=" + q[1] : ""}` : yt ? `https://www.youtube-nocookie.com/embed/${yt[1]}` : "");
+  const embed = b.embed || (/^https:\/\//.test(String(b.src || "")) ? b.src : "") || (m ? `https://rutube.ru/play/embed/${m[2]}${q ? "?p=" + q[1] : ""}` : yt ? `https://www.youtube-nocookie.com/embed/${yt[1]}` : "");
   return `<div class="video">${embed ? `<div class="vid-frame"><iframe src="${esc(embed)}" loading="lazy" allow="clipboard-write; autoplay; fullscreen" allowfullscreen referrerpolicy="no-referrer" title="${esc(b.title || "Video")}"></iframe></div>` : ""}
     <div class="vid-cap"><div class="vid-t">${esc(b.title || "Video")}</div>${b.note ? `<div class="vid-m">${esc(b.note)}</div>` : ""}
     <a class="vid-l" href="${esc(b.url || "")}" target="_blank" rel="noopener">Open the film in a new tab</a></div></div>`;
